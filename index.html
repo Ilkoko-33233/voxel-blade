@@ -42,6 +42,9 @@ const MIN_CUT_SPEED = 1.0;    // vitesse mini d'un point de lame pour couper (m/
 const EDGE_MIN = 0.6;         // alignement mini mouvement/tranchant pour couper (1 = parfaitement de taille)
 const DMG_PER_VOXEL = 1;      // dégâts de base par voxel traversé
 const WEAK_MULT = 3;          // multiplicateur sur les points faibles (yeux)
+const PLAYER_LEVEL = 5;       // niveau fixe du joueur pour le test
+const PLATE_SHOW_TIME = 10;   // secondes d'affichage de la plaque après le dernier échange de coups
+const CAT_COLORS = { npc: '#D3CBB8', passive: '#8BCF5A', lower: '#F2D45C', equal: '#F09A3E', higher: '#E5484D', boss: '#A27BF0', legendary: '#4FA3F7' };
 const speedMult = s => THREE.MathUtils.clamp(s / 2.5, 0.4, 3);
 
 /* ================= Utilitaires ================= */
@@ -281,7 +284,7 @@ function buildModel(nx, ny, nz, shape, paint) {
 const tint = (hex, amt) => _c.setHex(hex).offsetHSL(0, 0, amt).getHex();
 
 const SLIME = {
-  name: 'Slime', hp: 500, hop: true,
+  name: 'Slime', level: 1, cat: 'monster', behavior: 'approach', hp: 500, hop: true,
   build: () => buildModel(15, 12, 15,
     (x, j, z) => { const y = j + 0.5 - 4.5, ry = y < 0 ? 4.5 : 7.5, r = 7.2; return (x * x + z * z) / (r * r) + (y * y) / (ry * ry) <= 1; },
     (x, j, z, { depth }) => {
@@ -295,7 +298,7 @@ const SLIME = {
     })
 };
 const MUSHROOM = {
-  name: 'Champi', hp: 400, hop: false,
+  name: 'Champi', level: 5, cat: 'monster', behavior: 'approach', hp: 400, hop: false,
   build: () => buildModel(15, 13, 15,
     (x, j, z) => {
       const d2 = x * x + z * z;
@@ -316,6 +319,82 @@ const MUSHROOM = {
     })
 };
 
+const RABBIT = {
+  name: 'Lapin des prés', level: 2, cat: 'passive', behavior: 'passive', hp: 60, hop: true,
+  build: () => buildModel(9, 11, 12,
+    (x, j, z) => {
+      const y = j + 0.5;
+      if ((x / 3.2) ** 2 + ((y - 3) / 3) ** 2 + ((z + 1.5) / 3.8) ** 2 <= 1) return true;          // corps
+      if (x * x + (y - 6) ** 2 + (z - 2) ** 2 <= 2.4 * 2.4) return true;                            // tête
+      if ((x === -1 || x === 1) && j >= 8 && j <= 10 && z >= 0.5 && z <= 1.5) return true;            // oreilles
+      return x * x + (y - 3.5) ** 2 + (z + 5.5) ** 2 <= 1.3;                                          // queue
+    },
+    (x, j, z, { depth }) => {
+      if (depth <= 1 && j === 6 && (x === -1 || x === 1)) return { c: 0x1a1a2e, w: true };
+      if (depth === 0 && j === 5 && x === 0) return { c: 0xe58a9a };
+      if (j >= 8) return { c: (x === -1 || x === 1) && z > 0.9 ? 0xe9b9b0 : 0xcaa27c };
+      if (z <= -4.5) return { c: 0xfaf6ee };
+      if (j <= 2 && z > -2) return { c: tint(0xe9dcc6, (hash3(x, j, z) - 0.5) * 0.05) };
+      return { c: tint(0xc49a6c, (hash3(x, j, z) - 0.5) * 0.06) };
+    })
+};
+
+/* ================= Plaques d'informations ================= */
+function plateCategory(m) {
+  const k = m.kind;
+  if (k.cat === 'npc' || k.cat === 'boss' || k.cat === 'legendary') return k.cat;
+  if (k.cat === 'passive' && !m.defending) return 'passive';
+  const d = k.level - PLAYER_LEVEL;
+  return d <= -3 ? 'lower' : d >= 3 ? 'higher' : 'equal';
+}
+const fmt = n => Math.max(0, Math.ceil(n)).toLocaleString('fr-FR');
+class Plate {
+  constructor() {
+    this.canvas = document.createElement('canvas'); this.canvas.width = 512; this.canvas.height = 144;
+    this.tex = new THREE.CanvasTexture(this.canvas); this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.169), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false, opacity: 0 }));
+    this.mesh.renderOrder = 10; this.mesh.visible = false; scene.add(this.mesh);
+    this.key = ''; this.alpha = 0;
+  }
+  draw(m) {
+    const cat = plateCategory(m), k = m.kind, hp = fmt(m.hp), key = cat + '|' + hp;
+    if (key === this.key) return; this.key = key;
+    const g = this.canvas.getContext('2d'), col = CAT_COLORS[cat], W = 512, H = k.cat === 'npc' ? 76 : 144;
+    g.clearRect(0, 0, 512, 144);
+    g.fillStyle = 'rgba(31,31,29,.92)'; g.strokeStyle = col; g.lineWidth = 6;
+    g.beginPath(); g.roundRect(4, 4, W - 8, H - 8, 16); g.fill(); g.stroke();
+    let x = 26;
+    if (cat === 'boss' || cat === 'legendary') { g.fillStyle = col; g.font = 'bold 40px system-ui, sans-serif'; g.textBaseline = 'middle'; g.fillText(cat === 'boss' ? '☠' : '★', x, 42); x += 46; }
+    // badge de niveau (ou rôle pour un PNJ)
+    const badge = k.cat === 'npc' ? (k.role || 'PNJ') : (cat === 'boss' ? 'Boss · ' : cat === 'legendary' ? 'Légendaire · ' : '') + 'Niv. ' + k.level;
+    g.font = 'bold 28px system-ui, sans-serif'; g.textBaseline = 'middle';
+    const bw = g.measureText(badge).width + 24;
+    if (k.cat === 'npc') { g.fillStyle = '#b4b2a9'; g.textAlign = 'right'; g.fillText(badge, W - 26, 40); }
+    else { g.fillStyle = col; g.beginPath(); g.roundRect(W - 22 - bw, 22, bw, 40, 8); g.fill(); g.fillStyle = '#1f1f1d'; g.textAlign = 'center'; g.fillText(badge, W - 22 - bw / 2, 43); }
+    // nom
+    g.textAlign = 'left'; g.fillStyle = col; g.font = 'bold 38px system-ui, sans-serif';
+    let name = k.name; const maxW = W - 22 - bw - x - 16;
+    while (g.measureText(name).width > maxW && name.length > 3) name = name.slice(0, -2) + '…';
+    g.fillText(name, x, 42);
+    if (k.cat !== 'npc') {
+      g.fillStyle = '#3a3a37'; g.beginPath(); g.roundRect(22, 80, W - 44, 40, 8); g.fill();
+      const r = Math.max(0, Math.min(1, m.hp / m.maxHp));
+      if (r > 0) { g.fillStyle = '#d8433a'; g.beginPath(); g.roundRect(22, 80, Math.max(16, (W - 44) * r), 40, 8); g.fill(); }
+      g.fillStyle = '#ffffff'; g.font = 'bold 28px system-ui, sans-serif'; g.textAlign = 'center';
+      g.fillText(hp + ' / ' + fmt(m.maxHp), W / 2, 101);
+    }
+    this.tex.needsUpdate = true;
+  }
+  update(dt, m, show, topY) {
+    this.alpha += ((show ? 1 : 0) - this.alpha) * Math.min(1, dt * 8);
+    this.mesh.visible = this.alpha > 0.02; this.mesh.material.opacity = this.alpha;
+    if (!this.mesh.visible) return;
+    this.draw(m);
+    this.mesh.position.set(m.group.position.x, topY + 0.2, m.group.position.z);
+    this.mesh.lookAt(playerPos);
+  }
+}
+
 /* ================= Monstres ================= */
 const _m = new THREE.Matrix4(), _v = new V3(), _w = new V3();
 const dirOf = a => new V3(Math.sin(a), 0, -Math.cos(a));
@@ -330,14 +409,9 @@ class Monster {
     for (let i = 0; i < n; i++) this.mesh.setColorAt(i, _c.setHex(this.model.col[i]));
     this.group = new THREE.Group(); this.group.add(this.mesh); scene.add(this.group);
     this.alive = new Uint8Array(n); this.vel = new V3(); this.lastThud = 0; this.stun = 0; this.jy = 0; this.jv = 0; this.num = null; this.yaw = 0; this.phase = rnd() * 6;
-    // barre de vie
-    this.bar = new THREE.Group();
-    const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.08), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthWrite: false }));
-    const fg = new THREE.PlaneGeometry(0.58, 0.05); fg.translate(0.29, 0, 0);
-    this.fill = new THREE.Mesh(fg, new THREE.MeshBasicMaterial({ color: 0xe8453c })); this.fill.position.set(-0.29, 0, 0.002);
-    this.bar.add(bg, this.fill); scene.add(this.bar);
-    this.state = 'dead'; this.timer = 0.3 + slot * 0.2;
-    this.group.visible = false; this.bar.visible = false;
+    this.plate = new Plate(); this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0; this.wp = new V3();
+    this.state = 'dead'; this.timer = 0.3 + (slot || 0.6) * 0.2;
+    this.group.visible = false;
   }
   setVoxel(i, show) {
     const a = this.mesh.instanceMatrix.array, o = i * 16, p = this.model.pos, s = show ? V * 0.97 : 0;
@@ -349,9 +423,20 @@ class Monster {
   spawn() {
     const n = this.model.count; this.alive.fill(1); for (let i = 0; i < n; i++) this.setVoxel(i, true);
     this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
-    const d = dirOf(this.slot); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5);
-    this.group.scale.setScalar(0.001); this.group.visible = true; this.bar.visible = true;
+    if (this.kind.behavior === 'passive') { this.pickWaypoint(); this.group.position.copy(this.wp); this.pickWaypoint(); }
+    else { const d = dirOf(this.slot); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5); }
+    this.group.scale.setScalar(0.001); this.group.visible = true;
+    this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0;
     this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.vel.set(0, 0, 0); this.stun = 0; this.jy = 0; this.jv = 0;
+  }
+  pickWaypoint() { // point au hasard dans la clairière, plutôt devant le joueur
+    const a = (rnd() - 0.5) * 2.6, r = 2.6 + rnd() * 3.2;
+    this.wp.set(Math.sin(a) * r, 0, -Math.cos(a) * r);
+  }
+  // le joueur frappe ou bouscule cette créature
+  onAttacked() {
+    this.engagedUntil = time + PLATE_SHOW_TIME;
+    if (this.kind.behavior === 'passive') { this.fleeUntil = time + 3.5; this.wait = 0; }
   }
   voxelAt(l) {
     const m = this.model;
@@ -377,7 +462,7 @@ class Monster {
     const c = this.model.col[id];
     for (let n = 0; n < 2; n++)
       spawnParticle(_w.x, _w.y, _w.z, vel.x * 0.25 + (rnd() - 0.5) * 1.4, vel.y * 0.25 + rnd() * 1.6 + 0.4, vel.z * 0.25 + (rnd() - 0.5) * 1.4, c, V * (0.45 + rnd() * 0.3), 0.6 + rnd() * 0.6);
-    this.mat.emissiveIntensity = 0.55; this.pendingDetach = true;
+    this.mat.emissiveIntensity = 0.55; this.pendingDetach = true; this.onAttacked();
   }
   // recul : impulsion horizontale (m/s), petit saut et étourdissement
   impulse(ix, iz, maxSpeed, hop) {
@@ -412,7 +497,7 @@ class Monster {
     }
   }
   kill() {
-    this.state = 'dead'; this.timer = 2.5; kills++; drawSign();
+    this.state = 'dead'; this.timer = this.kind.behavior === 'passive' ? 4 : 2.5; kills++; drawSign();
     const cx = this.group.position.x, cy = this.group.position.y + this.model.height / 2, cz = this.group.position.z;
     for (let i = 0; i < this.model.count; i++) if (this.alive[i]) {
       this.voxelWorld(i, _w);
@@ -424,23 +509,36 @@ class Monster {
       spawnParticle(_w.x, _w.y, _w.z, _v.x, _v.y + 1.5, _v.z, this.model.col[i], V * (0.7 + rnd() * 0.3), 0.9 + rnd() * 0.8);
       this.alive[i] = 0;
     }
-    this.group.visible = false; this.bar.visible = false;
+    this.group.visible = false; this.engagedUntil = -1;
     if (this.num) { this.num.release(true); this.num = null; }
     playDeath(); haptic(1, 120);
   }
   update(dt) {
-    if (this.state === 'dead') { this.timer -= dt; if (this.timer <= 0) this.spawn(); return; }
+    if (this.state === 'dead') { this.plate.update(dt, this, false, 0); this.timer -= dt; if (this.timer <= 0) this.spawn(); return; }
     const g = this.group;
     if (this.state === 'spawning') {
       this.t += dt; g.scale.setScalar(Math.max(0.001, easeOutBack(Math.min(1, this.t / 0.6))));
       if (this.t >= 0.6) { this.state = 'alive'; g.scale.setScalar(1); }
     }
-    // déplacement vers sa place devant le joueur
-    const d = dirOf(this.slot), tx = playerPos.x + d.x * 1.25, tz = playerPos.z + d.z * 1.25;
-    let dx = tx - g.position.x, dz = tz - g.position.z; const dist = Math.hypot(dx, dz);
     if (this.stun > 0) this.stun -= dt;
-    const moving = dist > 0.04 && this.stun <= 0;
-    if (moving) { const st = Math.min(dist, 1.1 * dt); g.position.x += dx / dist * st; g.position.z += dz / dist * st; }
+    let mx = 0, mz = 0, step = 0;
+    if (this.kind.behavior === 'passive') {
+      if (time < this.fleeUntil) { // fuit le joueur
+        mx = g.position.x - playerPos.x; mz = g.position.z - playerPos.z; const l = Math.hypot(mx, mz) || 1; mx /= l; mz /= l;
+        if (Math.hypot(g.position.x, g.position.z) > 14) { mx = -g.position.x; mz = -g.position.z; const l2 = Math.hypot(mx, mz); mx /= l2; mz /= l2; }
+        step = 2.6 * dt;
+      } else if (this.wait > 0) this.wait -= dt;
+      else { // se promène
+        mx = this.wp.x - g.position.x; mz = this.wp.z - g.position.z; const l = Math.hypot(mx, mz);
+        if (l < 0.1) { this.wait = 1 + rnd() * 2.5; this.pickWaypoint(); mx = mz = 0; } else { mx /= l; mz /= l; step = Math.min(l, 0.6 * dt); }
+      }
+    } else { // va se placer devant le joueur
+      const d = dirOf(this.slot);
+      mx = playerPos.x + d.x * 1.25 - g.position.x; mz = playerPos.z + d.z * 1.25 - g.position.z; const l = Math.hypot(mx, mz);
+      if (l > 0.04) { mx /= l; mz /= l; step = Math.min(l, 1.1 * dt); } else mx = mz = 0;
+    }
+    const moving = step > 0 && this.stun <= 0;
+    if (moving) { g.position.x += mx * step; g.position.z += mz * step; }
     g.position.x += this.vel.x * dt; g.position.z += this.vel.z * dt; this.vel.multiplyScalar(Math.exp(-dt * 4));
     // ne jamais être poussé dans le joueur
     { const px = g.position.x - playerPos.x, pz = g.position.z - playerPos.z, pd = Math.hypot(px, pz), minD = this.model.radius * 0.8 + 0.25;
@@ -448,7 +546,9 @@ class Monster {
     // petit saut quand on le bouscule
     if (this.jy > 0 || this.jv > 0) { this.jv -= 9.8 * dt; this.jy += this.jv * dt; if (this.jy <= 0) { this.jy = 0; this.jv = 0; } }
     // regarde le joueur
-    const want = Math.atan2(playerPos.x - g.position.x, playerPos.z - g.position.z);
+    const want = this.kind.behavior === 'passive'
+      ? (moving ? Math.atan2(mx, mz) : this.yaw)
+      : Math.atan2(playerPos.x - g.position.x, playerPos.z - g.position.z);
     let dy = want - this.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); this.yaw += dy * Math.min(1, dt * 6);
     g.rotation.y = this.yaw;
     // animation
@@ -468,13 +568,11 @@ class Monster {
     if (this.pendingDetach && time - this.lastHit > 0.12) { this.pendingDetach = false; this.checkDetached(); }
     if (this.num && time - this.lastHit > 0.35) { this.num.release(); this.num = null; }
     if (this.state === 'alive' && (this.hp <= 0 || this.aliveCount <= 0)) { this.kill(); return; }
-    // barre de vie
-    this.bar.position.set(g.position.x, g.position.y + this.model.height * g.scale.y + 0.22, g.position.z);
-    this.bar.lookAt(playerPos);
-    this.fill.scale.x = Math.max(0.001, this.hp / this.maxHp);
+    // plaque visible seulement pendant un échange de coups
+    this.plate.update(dt, this, time < this.engagedUntil, g.position.y + this.model.height * g.scale.y);
   }
 }
-const monsters = [new Monster(SLIME, -0.5), new Monster(MUSHROOM, 0.5)];
+const monsters = [new Monster(SLIME, -0.5), new Monster(MUSHROOM, 0.5), new Monster(RABBIT, null)];
 
 /* ================= Épée ================= */
 const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdfe7ef, metalness: 0.5, roughness: 0.3, emissive: 0x112233 });
@@ -598,6 +696,7 @@ function sweep(b0, t0, b1, t1) {
       // repousse dans le sens du coup + hors de la lame
       let ox = _cen.x - pushPt.x, oz = _cen.z - pushPt.z; const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
       m.impulse(pushVel.x * 0.7 + ox * 0.6, pushVel.z * 0.7 + oz * 0.6, 3.5, hs > 0.8);
+      if (hs > 0.6) m.onAttacked();
       if (hs > 0.6 && time - m.lastThud > 0.25) {
         m.lastThud = time; m.mat.emissiveIntensity = Math.max(m.mat.emissiveIntensity, 0.2);
         playThud(Math.min(1, hs / 3)); haptic(Math.min(0.8, 0.2 + hs * 0.15), 35);
