@@ -602,13 +602,16 @@ addEventListener('keydown', e => { if (e.key === 'Escape' && mode === 'desktop')
 vrBtn.onclick = async () => {
   initAudio();
   try {
-    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] });
+    let session;
+    try { session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] }); }
+    catch (e1) { session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] }); }
     dropSword(); mode = 'vr'; ui.hidden = true; hud.hidden = true;
     session.addEventListener('end', () => { showMenu(); statusEl.textContent = 'Session VR terminée. Tu peux y retourner.'; });
     await renderer.xr.setSession(session);
   } catch (e) {
     showMenu();
-    statusEl.textContent = 'Impossible de lancer la VR (' + e.name + ') : ' + e.message;
+    let framed = false; try { framed = window.self !== window.top; } catch (x) { framed = true; }
+    statusEl.textContent = 'Impossible de lancer la VR (' + e.name + ') : ' + e.message + (framed ? ' — page intégrée dans un cadre : la VR y est probablement bloquée.' : ' — page ouverte directement.');
   }
 };
 (async () => {
