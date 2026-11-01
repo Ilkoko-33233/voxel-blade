@@ -29,7 +29,7 @@
   <button id="deskBtn" class="ghost">Tester à la souris</button>
   <p class="small">Joue debout, avec environ 2 m libres devant toi.<br>Gâchette : prendre l'épée dans cette main.</p>
 </div></div>
-<div id="hud" hidden>Bouge la souris vite pour trancher · Échap : menu</div>
+<div id="hud" hidden>Bouge la souris vite pour trancher · Maj : coup du plat · Échap : menu</div>
 
 <script type="module">
 import * as THREE from 'three';
@@ -39,6 +39,7 @@ const V = 0.08;               // taille d'un voxel (m)
 const BLADE_START = 0.09;     // début de la lame depuis la main (m)
 const BLADE_LEN = 0.95;       // longueur de lame (m)
 const MIN_CUT_SPEED = 1.0;    // vitesse mini d'un point de lame pour couper (m/s)
+const EDGE_MIN = 0.6;         // alignement mini mouvement/tranchant pour couper (1 = parfaitement de taille)
 const DMG_PER_VOXEL = 1;      // dégâts de base par voxel traversé
 const WEAK_MULT = 3;          // multiplicateur sur les points faibles (yeux)
 const speedMult = s => THREE.MathUtils.clamp(s / 2.5, 0.4, 3);
@@ -135,8 +136,8 @@ function drawSign() {
   g.font = 'bold 76px system-ui, sans-serif'; g.fillText('VOXEL BLADE', 512, 110);
   g.font = '34px system-ui, sans-serif'; g.globalAlpha = .8; g.fillText('prototype — test de découpe', 512, 160); g.globalAlpha = 1;
   g.font = '38px system-ui, sans-serif'; g.textAlign = 'left';
-  ['• Chaque voxel traversé = dégâts', '• Plus le coup est rapide, plus ça fait mal', '• Les yeux sont des points faibles (×3)', '• Gâchette : changer l\'épée de main']
-    .forEach((t, i) => g.fillText(t, 70, 250 + i * 62));
+  ['• Seul le tranchant coupe : chaque voxel = dégâts', '• Plus le coup est rapide, plus ça fait mal', '• Plat de la lame ou coup lent : ça repousse', '• Les yeux sont des points faibles (×3)', '• Gâchette : changer l\'épée de main']
+    .forEach((t, i) => g.fillText(t, 60, 232 + i * 56));
   g.textAlign = 'center'; g.font = 'bold 46px system-ui, sans-serif'; g.fillStyle = '#ffd23a';
   g.fillText('Monstres vaincus : ' + kills, 512, 545);
   signTex.needsUpdate = true;
@@ -169,6 +170,10 @@ function burst(freq, q, vol, dur, type = 'bandpass') {
 function playHit(intensity) {
   if (!actx) return; const now = actx.currentTime; if (now - lastHitSnd < 0.04) return; lastHitSnd = now;
   burst(700 + intensity * 1800, 1.2, Math.min(0.55, 0.15 + intensity * 0.2), 0.09);
+}
+function playThud(intensity) {
+  if (!actx) return;
+  burst(160 + intensity * 120, 0.8, 0.25 + intensity * 0.35, 0.16, 'lowpass');
 }
 function playDeath() {
   if (!actx) return; const now = actx.currentTime;
@@ -324,7 +329,7 @@ class Monster {
     this.mesh = new THREE.InstancedMesh(boxGeo, this.mat, n); this.mesh.frustumCulled = false;
     for (let i = 0; i < n; i++) this.mesh.setColorAt(i, _c.setHex(this.model.col[i]));
     this.group = new THREE.Group(); this.group.add(this.mesh); scene.add(this.group);
-    this.alive = new Uint8Array(n); this.kb = new V3(); this.num = null; this.yaw = 0; this.phase = rnd() * 6;
+    this.alive = new Uint8Array(n); this.vel = new V3(); this.lastThud = 0; this.stun = 0; this.jy = 0; this.jv = 0; this.num = null; this.yaw = 0; this.phase = rnd() * 6;
     // barre de vie
     this.bar = new THREE.Group();
     const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.08), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthWrite: false }));
@@ -346,7 +351,7 @@ class Monster {
     this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
     const d = dirOf(this.slot); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5);
     this.group.scale.setScalar(0.001); this.group.visible = true; this.bar.visible = true;
-    this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.kb.set(0, 0, 0);
+    this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.vel.set(0, 0, 0); this.stun = 0; this.jy = 0; this.jv = 0;
   }
   voxelAt(l) {
     const m = this.model;
@@ -372,9 +377,15 @@ class Monster {
     const c = this.model.col[id];
     for (let n = 0; n < 2; n++)
       spawnParticle(_w.x, _w.y, _w.z, vel.x * 0.25 + (rnd() - 0.5) * 1.4, vel.y * 0.25 + rnd() * 1.6 + 0.4, vel.z * 0.25 + (rnd() - 0.5) * 1.4, c, V * (0.45 + rnd() * 0.3), 0.6 + rnd() * 0.6);
-    this.kb.x += vel.x * 0.0004; this.kb.z += vel.z * 0.0004;
-    if (this.kb.length() > 0.03) this.kb.setLength(0.03);
     this.mat.emissiveIntensity = 0.55; this.pendingDetach = true;
+  }
+  // recul : impulsion horizontale (m/s), petit saut et étourdissement
+  impulse(ix, iz, maxSpeed, hop) {
+    this.vel.x += ix; this.vel.z += iz;
+    const h = Math.hypot(this.vel.x, this.vel.z);
+    if (h > maxSpeed) { this.vel.x *= maxSpeed / h; this.vel.z *= maxSpeed / h; }
+    if (hop && this.jy <= 0.001) this.jv = Math.max(this.jv, Math.min(2.2, Math.hypot(ix, iz) * 0.55));
+    this.stun = Math.max(this.stun, 0.25 + Math.min(0.35, Math.hypot(ix, iz) * 0.1));
   }
   checkDetached() {
     const m = this.model, n = m.count, alive = this.alive, seen = new Uint8Array(n), stack = [];
@@ -427,9 +438,15 @@ class Monster {
     // déplacement vers sa place devant le joueur
     const d = dirOf(this.slot), tx = playerPos.x + d.x * 1.25, tz = playerPos.z + d.z * 1.25;
     let dx = tx - g.position.x, dz = tz - g.position.z; const dist = Math.hypot(dx, dz);
-    const moving = dist > 0.04;
+    if (this.stun > 0) this.stun -= dt;
+    const moving = dist > 0.04 && this.stun <= 0;
     if (moving) { const st = Math.min(dist, 1.1 * dt); g.position.x += dx / dist * st; g.position.z += dz / dist * st; }
-    g.position.x += this.kb.x * 60 * dt; g.position.z += this.kb.z * 60 * dt; this.kb.multiplyScalar(Math.exp(-dt * 8));
+    g.position.x += this.vel.x * dt; g.position.z += this.vel.z * dt; this.vel.multiplyScalar(Math.exp(-dt * 4));
+    // ne jamais être poussé dans le joueur
+    { const px = g.position.x - playerPos.x, pz = g.position.z - playerPos.z, pd = Math.hypot(px, pz), minD = this.model.radius * 0.8 + 0.25;
+      if (pd < minD && pd > 1e-4) { g.position.x = playerPos.x + px / pd * minD; g.position.z = playerPos.z + pz / pd * minD; } }
+    // petit saut quand on le bouscule
+    if (this.jy > 0 || this.jv > 0) { this.jv -= 9.8 * dt; this.jy += this.jv * dt; if (this.jy <= 0) { this.jy = 0; this.jv = 0; } }
     // regarde le joueur
     const want = Math.atan2(playerPos.x - g.position.x, playerPos.z - g.position.z);
     let dy = want - this.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); this.yaw += dy * Math.min(1, dt * 6);
@@ -439,11 +456,11 @@ class Monster {
       this.phase += dt * (moving ? 8 : 3);
       if (this.kind.hop) {
         const h = Math.abs(Math.sin(this.phase));
-        g.position.y = moving ? h * 0.14 : 0;
+        g.position.y = (moving ? h * 0.14 : 0) + this.jy;
         const sq = moving ? 1 + (h - 0.5) * 0.12 : 1 + Math.sin(this.phase) * 0.03;
         g.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
       } else {
-        g.position.y = 0; g.rotation.z = Math.sin(this.phase) * (moving ? 0.1 : 0.03);
+        g.position.y = this.jy; g.rotation.z = Math.sin(this.phase) * (moving ? 0.1 : 0.03);
       }
     }
     this.mat.emissiveIntensity *= Math.exp(-dt * 14);
@@ -461,6 +478,7 @@ const monsters = [new Monster(SLIME, -0.5), new Monster(MUSHROOM, 0.5)];
 
 /* ================= Épée ================= */
 const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdfe7ef, metalness: 0.5, roughness: 0.3, emissive: 0x112233 });
+const edgeMat = new THREE.MeshBasicMaterial({ color: 0x9aa8b4 });
 const goldMat = new THREE.MeshLambertMaterial({ color: 0xd4a72c });
 const sword = new THREE.Group();
 {
@@ -470,8 +488,12 @@ const sword = new THREE.Group();
   const guard = new THREE.Mesh(boxGeo, goldMat); guard.scale.set(0.2, 0.03, 0.035); guard.position.z = -0.075;
   const blade = new THREE.Mesh(boxGeo, bladeMat); blade.scale.set(0.055, 0.012, BLADE_LEN); blade.position.z = -(BLADE_START + BLADE_LEN / 2);
   sword.add(handle, pommel, guard, blade);
+  for (const sx of [-1, 1]) { // les deux tranchants, qui s'illuminent quand le coup coupe
+    const e = new THREE.Mesh(boxGeo, edgeMat); e.scale.set(0.007, 0.005, BLADE_LEN - 0.01);
+    e.position.set(sx * 0.0295, 0, blade.position.z); sword.add(e);
+  }
 }
-const swordState = { holder: null, hasPrev: false, prevB: new V3(), prevT: new V3(), tipSpeed: 0 };
+const swordState = { holder: null, hasPrev: false, prevB: new V3(), prevT: new V3(), tipSpeed: 0, edge: 0 };
 function giveSword(holder) {
   if (swordState.holder?.userData.fist) swordState.holder.userData.fist.visible = true;
   holder.add(sword); swordState.holder = holder; swordState.hasPrev = false;
@@ -532,7 +554,15 @@ function updateTrail(B, T, k, reset) {
 // balayage : teste chaque voxel traversé par la lame entre deux images
 const _B = new V3(), _T = new V3(), _b = new V3(), _t = new V3(), _p = new V3(), _l = new V3(), _sv = new V3(), _inv = new THREE.Matrix4();
 const tipVel = new V3(), baseVel = new V3(), _mid = new V3(), _cen = new V3();
-function sweep(b0, t0, b1, t1, vb, vt) {
+const xAx = new V3(), yAx = new V3(), zAx = new V3(), _vp = new V3(), cutVel = new V3(), pushVel = new V3(), pushPt = new V3();
+// découpe si le point de lame avance par le tranchant et assez vite ; sinon il pousse
+function sampleCut(vel) {
+  _vp.copy(vel).addScaledVector(zAx, -vel.dot(zAx));        // mouvement perpendiculaire à la lame
+  const pl = _vp.length();
+  const edge = pl > 0.05 ? Math.abs(_vp.dot(xAx)) / pl : 0;  // 1 = de taille, 0 = du plat
+  return { speed: pl, edge, cut: pl >= MIN_CUT_SPEED && edge >= EDGE_MIN };
+}
+function sweep(b0, t0, b1, t1) {
   const along = Math.ceil(BLADE_LEN / (V * 0.45));
   const move = Math.max(t0.distanceTo(t1), b0.distanceTo(b1));
   const steps = Math.min(48, Math.max(1, Math.ceil(move / (V * 0.45))));
@@ -542,18 +572,37 @@ function sweep(b0, t0, b1, t1, vb, vt) {
     _cen.set(0, m.model.height / 2, 0).applyMatrix4(m.group.matrixWorld);
     if (_cen.distanceTo(_mid) > m.model.radius * 1.2 + BLADE_LEN * 0.5 + move) continue;
     _inv.copy(m.group.matrixWorld).invert();
-    let hits = 0, intensity = 0;
+    let hits = 0, intensity = 0, pushN = 0;
+    cutVel.set(0, 0, 0); pushVel.set(0, 0, 0); pushPt.set(0, 0, 0);
     for (let s = 1; s <= steps; s++) {
       const f = s / steps; _b.lerpVectors(b0, b1, f); _t.lerpVectors(t0, t1, f);
       for (let a = 0; a <= along; a++) {
-        const g = a / along, sp = vb + (vt - vb) * g;
-        if (sp < MIN_CUT_SPEED) continue;
+        const g = a / along;
         _p.lerpVectors(_b, _t, g); _l.copy(_p).applyMatrix4(_inv);
         const id = m.voxelAt(_l);
-        if (id >= 0) { _sv.lerpVectors(baseVel, tipVel, g); m.cutVoxel(id, sp, _p, _sv); hits++; intensity = Math.max(intensity, speedMult(sp)); }
+        if (id < 0) continue;
+        _sv.lerpVectors(baseVel, tipVel, g);
+        const c = sampleCut(_sv);
+        if (c.cut) { m.cutVoxel(id, c.speed, _p, _sv); cutVel.add(_sv); hits++; intensity = Math.max(intensity, speedMult(c.speed)); }
+        else { pushVel.add(_sv); pushPt.add(_p); pushN++; }
       }
     }
-    if (hits) { haptic(Math.min(1, 0.25 + hits * 0.03 * intensity), 25); playHit(intensity); }
+    if (hits) {
+      cutVel.divideScalar(hits);
+      m.impulse(cutVel.x * 0.12, cutVel.z * 0.12, 1.3, false);
+      haptic(Math.min(1, 0.25 + hits * 0.03 * intensity), 25); playHit(intensity);
+    }
+    if (pushN) {
+      pushVel.divideScalar(pushN); pushPt.divideScalar(pushN);
+      const hs = Math.hypot(pushVel.x, pushVel.z);
+      // repousse dans le sens du coup + hors de la lame
+      let ox = _cen.x - pushPt.x, oz = _cen.z - pushPt.z; const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
+      m.impulse(pushVel.x * 0.7 + ox * 0.6, pushVel.z * 0.7 + oz * 0.6, 3.5, hs > 0.8);
+      if (hs > 0.6 && time - m.lastThud > 0.25) {
+        m.lastThud = time; m.mat.emissiveIntensity = Math.max(m.mat.emissiveIntensity, 0.2);
+        playThud(Math.min(1, hs / 3)); haptic(Math.min(0.8, 0.2 + hs * 0.15), 35);
+      }
+    }
   }
 }
 function updateSword(dt) {
@@ -568,28 +617,42 @@ function updateSword(dt) {
     if (jump > 1.0) reset = true; // saut de suivi : on ignore
     else {
       tipVel.subVectors(_T, swordState.prevT).divideScalar(dt); baseVel.subVectors(_B, swordState.prevB).divideScalar(dt);
-      const vt = tipVel.length(), vb = baseVel.length();
-      swordState.tipSpeed += (vt - swordState.tipSpeed) * 0.5;
-      if (vt > MIN_CUT_SPEED) sweep(swordState.prevB, swordState.prevT, _B, _T, vb, vt);
+      sword.matrixWorld.extractBasis(xAx, yAx, zAx); xAx.normalize(); zAx.normalize();
+      const c = sampleCut(tipVel);
+      swordState.tipSpeed += (c.speed - swordState.tipSpeed) * 0.5;
+      swordState.edge += (c.edge - swordState.edge) * 0.5;
+      sweep(swordState.prevB, swordState.prevT, _B, _T);
     }
   }
   if (reset) swordState.tipSpeed = 0;
   swordState.prevB.copy(_B); swordState.prevT.copy(_T); swordState.hasPrev = true;
   const k = THREE.MathUtils.clamp((swordState.tipSpeed - MIN_CUT_SPEED) / 4, 0, 1);
-  bladeMat.emissive.setRGB(0.07 + 0.25 * k, 0.12 + 0.55 * k, 0.2 + 0.8 * k);
-  updateTrail(_B, _T, k, reset);
+  const ek = swordState.tipSpeed >= MIN_CUT_SPEED ? k * THREE.MathUtils.smoothstep(swordState.edge, EDGE_MIN - 0.1, EDGE_MIN + 0.15) : 0;
+  bladeMat.emissive.setRGB(0.07 + 0.1 * ek, 0.12 + 0.25 * ek, 0.2 + 0.35 * ek);
+  edgeMat.color.setRGB(0.55 + 0.45 * ek, 0.62 + 0.38 * ek, 0.68 + 0.32 * ek);
+  updateTrail(_B, _T, ek, reset);
 }
 
 /* ================= Mode souris ================= */
 const deskHand = new THREE.Group(); scene.add(deskHand);
 const mouse = new THREE.Vector2(0.15, -0.35), ray = new THREE.Raycaster(), _sh = new V3(), _hd = new V3(), FWD = new V3(0, 0, -1);
+const _mv = new V3(), _ex = new V3(), _ey = new V3(), _mb = new THREE.Matrix4(), deskEdge = new V3(1, 0, 0); let deskFlat = false;
+addEventListener('keydown', e => { if (e.key === 'Shift') deskFlat = true; });
+addEventListener('keyup', e => { if (e.key === 'Shift') deskFlat = false; });
 addEventListener('pointermove', e => { mouse.x = e.clientX / innerWidth * 2 - 1; mouse.y = -(e.clientY / innerHeight) * 2 + 1; });
 function updateDeskHand() {
   ray.setFromCamera(mouse, camera);
   _hd.copy(ray.ray.origin).addScaledVector(ray.ray.direction, 0.6);
   _sh.set(0.28, -0.4, -0.05); camera.localToWorld(_sh);
+  const dir = _v.subVectors(_hd, _sh).normalize();
+  // le tranchant suit le mouvement de la souris ; Maj enfoncée = coup du plat
+  _mv.subVectors(_hd, deskHand.position); _mv.addScaledVector(dir, -_mv.dot(dir));
+  if (_mv.lengthSq() > 1e-6) deskEdge.lerp(_mv.normalize(), 0.5).normalize();
   deskHand.position.copy(_hd);
-  deskHand.quaternion.setFromUnitVectors(FWD, _v.subVectors(_hd, _sh).normalize());
+  _ex.copy(deskEdge).addScaledVector(dir, -deskEdge.dot(dir)).normalize();
+  if (deskFlat) _ex.crossVectors(dir, _ex).normalize();
+  _mb.makeBasis(_ex, _ey.crossVectors(dir.clone().negate(), _ex), dir.clone().negate());
+  deskHand.quaternion.setFromRotationMatrix(_mb);
 }
 
 /* ================= Interface ================= */
