@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voxel Blade — prototype VR</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#8ec5ff;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+  canvas{display:block;touch-action:none}
+  #ui{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+  #panel{pointer-events:auto;background:rgba(14,20,32,.86);color:#f4f1ea;padding:26px 30px;border-radius:16px;max-width:430px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+  h1{margin:0 0 4px;font-size:30px;letter-spacing:.06em}
+  .sub{margin:0 0 16px;opacity:.75;font-size:14px}
+  #status{font-size:14px;line-height:1.45;margin:0 0 16px;min-height:20px}
+  button{display:block;width:100%;margin:8px 0;padding:14px 16px;font-size:17px;font-weight:700;border:0;border-radius:10px;cursor:pointer;background:#5fd16a;color:#0d1a10}
+  button.ghost{background:transparent;color:#f4f1ea;border:2px solid rgba(255,255,255,.35);font-weight:600}
+  .small{font-size:12.5px;opacity:.7;margin:14px 0 0;line-height:1.4}
+  #hud{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);color:#fff;background:rgba(0,0,0,.45);padding:8px 14px;border-radius:8px;font-size:14px;pointer-events:none}
+  [hidden]{display:none!important}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"}}</script>
+</head>
+<body>
+<div id="ui"><div id="panel">
+  <h1>VOXEL BLADE</h1>
+  <p class="sub">Prototype de découpe voxel · Meta Quest 3</p>
+  <p id="status">Vérification de la VR…</p>
+  <button id="vrBtn" hidden>Entrer en VR</button>
+  <button id="deskBtn" class="ghost">Tester à la souris</button>
+  <p class="small">Joue debout, avec environ 2 m libres devant toi.<br>Gâchette : prendre l'épée dans cette main.</p>
+</div></div>
+<div id="hud" hidden>Bouge la souris vite pour trancher · Échap : menu</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ================= Réglages ================= */
+const V = 0.08;               // taille d'un voxel (m)
+const BLADE_START = 0.09;     // début de la lame depuis la main (m)
+const BLADE_LEN = 0.95;       // longueur de lame (m)
+const MIN_CUT_SPEED = 1.0;    // vitesse mini d'un point de lame pour couper (m/s)
+const DMG_PER_VOXEL = 1;      // dégâts de base par voxel traversé
+const WEAK_MULT = 3;          // multiplicateur sur les points faibles (yeux)
+const speedMult = s => THREE.MathUtils.clamp(s / 2.5, 0.4, 3);
+
+/* ================= Utilitaires ================= */
+let seed = 1337;
+const rnd = () => (seed = (seed * 16807) % 2147483647, (seed - 1) / 2147483646);
+const hash3 = (x, y, z) => (((x * 73856093) ^ (y * 19349663) ^ (z * 83492791)) >>> 0) % 1000 / 1000;
+const easeOutBack = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const V3 = THREE.Vector3;
+
+/* ================= Rendu ================= */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8ec5ff);
+scene.fog = new THREE.Fog(0x8ec5ff, 18, 55);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 120);
+camera.position.set(0, 1.6, 0);
+camera.lookAt(0, 0.55, -1.3);
+scene.add(camera);
+
+scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x4d6b38, 1.4));
+const sun = new THREE.DirectionalLight(0xfff2d8, 2.2);
+sun.position.set(6, 10, 4);
+scene.add(sun);
+
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const playerPos = new V3(0, 1.6, 0);
+
+/* ================= Décor ================= */
+const ground = new THREE.Mesh(new THREE.CircleGeometry(70, 48), new THREE.MeshLambertMaterial({ color: 0x5d9e45 }));
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+const clearing = new THREE.Mesh(new THREE.CircleGeometry(4.2, 32), new THREE.MeshLambertMaterial({ color: 0x74b257 }));
+clearing.rotation.x = -Math.PI / 2; clearing.position.y = 0.003;
+scene.add(clearing);
+
+const decor = [];
+const box = (x, y, z, sx, sy, sz, c, ry = 0) => decor.push([x, y, z, sx, sy, sz, c, ry]);
+function tree(x, z) {
+  const h = 1.6 + rnd() * 1.6, s = 1.3 + rnd() * 0.9;
+  const leaf = [0x3f8f3a, 0x4fa244, 0x377d33, 0x5aad47][Math.floor(rnd() * 4)];
+  box(x, h / 2, z, 0.38, h, 0.38, 0x6b4a2b);
+  box(x, h + s * 0.45, z, s * 1.7, s, s * 1.7, leaf);
+  box(x, h + s * 1.2, z, s * 1.05, s * 0.7, s * 1.05, leaf);
+}
+function house(x, z, w, d, h, ry) {
+  box(x, h / 2, z, w, h, d, 0xe8d9b5, ry);
+  box(x, h + 0.25, z, w + 0.5, 0.5, d + 0.5, 0xa8432f, ry);
+  box(x, h + 0.7, z, w * 0.65, 0.45, d + 0.5, 0xb84d36, ry);
+  box(x, h + 1.05, z, w * 0.3, 0.3, d + 0.5, 0xa8432f, ry);
+  const fx = Math.sin(ry), fz = Math.cos(ry); // la porte regarde vers -z local tourné
+  box(x - fx * (d / 2 + 0.01), 0.55, z - fz * (d / 2 + 0.01), 0.7, 1.1, 0.06, 0x5b3a1e, ry);
+}
+// petit village derrière le joueur
+house(-3.5, 9, 3, 2.6, 2.2, 0.3);
+house(2.5, 10.5, 3.4, 2.8, 2.5, -0.25);
+house(7.5, 8, 2.6, 2.4, 2.0, -0.7);
+house(-8, 11, 2.8, 2.6, 2.1, 0.6);
+for (let i = 0; i < 9; i++) box(-1.2 + i * 0.05, 0.01, 2 + i * 0.9, 1.1, 0.02, 0.8, 0xc9b27a, 0); // chemin
+// arbres autour de la clairière
+for (let i = 0; i < 80; i++) {
+  const a = rnd() * Math.PI * 2, r = 8 + rnd() * 26;
+  const x = Math.sin(a) * r, z = -Math.cos(a) * r;
+  if (z > 4 && z < 15 && Math.abs(x) < 11) continue;
+  tree(x, z);
+}
+for (let i = 0; i < 25; i++) { const a = rnd() * 6.28, r = 4.5 + rnd() * 14, s = 0.2 + rnd() * 0.5; box(Math.sin(a) * r, s * 0.35, -Math.cos(a) * r, s, s * 0.7, s * 0.9, 0x8d9096, rnd() * 3); }
+for (let i = 0; i < 260; i++) { const a = rnd() * 6.28, r = 1.5 + rnd() * 25, s = 0.06 + rnd() * 0.08; box(Math.sin(a) * r, s, -Math.cos(a) * r, s, s * 2, s, rnd() < 0.5 ? 0x4c8f37 : 0x6cbf4f, rnd() * 3); }
+for (let i = 0; i < 9; i++) { const x = -30 + rnd() * 60, z = -40 + rnd() * 60, y = 16 + rnd() * 6; box(x, y, z, 3 + rnd() * 4, 0.8, 2 + rnd() * 3, 0xffffff); box(x + 1, y + 0.6, z, 2, 0.6, 1.6, 0xffffff); }
+box(-1.9, 0.55, -2.0, 0.1, 1.1, 0.1, 0x5b3a1e); // poteau du panneau
+{
+  const m = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial(), decor.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new V3(), s = new V3(), c = new THREE.Color(), e = new THREE.Euler();
+  decor.forEach((d, i) => { p.set(d[0], d[1], d[2]); s.set(d[3], d[4], d[5]); q.setFromEuler(e.set(0, d[7], 0)); m.setMatrixAt(i, m4.compose(p, q, s)); m.setColorAt(i, c.setHex(d[6])); });
+  scene.add(m);
+}
+
+/* ================= Panneau d'info ================= */
+let kills = 0;
+const signCanvas = document.createElement('canvas'); signCanvas.width = 1024; signCanvas.height = 600;
+const signTex = new THREE.CanvasTexture(signCanvas); signTex.colorSpace = THREE.SRGBColorSpace;
+function drawSign() {
+  const g = signCanvas.getContext('2d');
+  g.fillStyle = '#5b3a1e'; g.fillRect(0, 0, 1024, 600);
+  g.fillStyle = '#8a5a32'; g.fillRect(18, 18, 988, 564);
+  g.fillStyle = '#fff6e0'; g.textAlign = 'center';
+  g.font = 'bold 76px system-ui, sans-serif'; g.fillText('VOXEL BLADE', 512, 110);
+  g.font = '34px system-ui, sans-serif'; g.globalAlpha = .8; g.fillText('prototype — test de découpe', 512, 160); g.globalAlpha = 1;
+  g.font = '38px system-ui, sans-serif'; g.textAlign = 'left';
+  ['• Chaque voxel traversé = dégâts', '• Plus le coup est rapide, plus ça fait mal', '• Les yeux sont des points faibles (×3)', '• Gâchette : changer l\'épée de main']
+    .forEach((t, i) => g.fillText(t, 70, 250 + i * 62));
+  g.textAlign = 'center'; g.font = 'bold 46px system-ui, sans-serif'; g.fillStyle = '#ffd23a';
+  g.fillText('Monstres vaincus : ' + kills, 512, 545);
+  signTex.needsUpdate = true;
+}
+drawSign();
+const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.645), new THREE.MeshBasicMaterial({ map: signTex }));
+sign.position.set(-1.9, 1.35, -2.0); sign.lookAt(0, 1.35, 0);
+scene.add(sign);
+
+/* ================= Son (synthétisé) ================= */
+let actx = null, noiseBuf = null, lastHitSnd = 0;
+function initAudio() {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    actx.resume();
+    if (!noiseBuf) {
+      noiseBuf = actx.createBuffer(1, actx.sampleRate * 0.6, actx.sampleRate);
+      const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+  } catch (e) { actx = null; }
+}
+function burst(freq, q, vol, dur, type = 'bandpass') {
+  const now = actx.currentTime;
+  const src = actx.createBufferSource(); src.buffer = noiseBuf;
+  const f = actx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+  const g = actx.createGain(); g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(vol, now + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  src.connect(f).connect(g).connect(actx.destination); src.start(now, Math.random() * 0.3); src.stop(now + dur + 0.02);
+}
+function playHit(intensity) {
+  if (!actx) return; const now = actx.currentTime; if (now - lastHitSnd < 0.04) return; lastHitSnd = now;
+  burst(700 + intensity * 1800, 1.2, Math.min(0.55, 0.15 + intensity * 0.2), 0.09);
+}
+function playDeath() {
+  if (!actx) return; const now = actx.currentTime;
+  burst(500, 0.7, 0.6, 0.45, 'lowpass');
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = 'square';
+  o.frequency.setValueAtTime(260, now); o.frequency.exponentialRampToValueAtTime(50, now + 0.35);
+  g.gain.setValueAtTime(0.12, now); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+  o.connect(g).connect(actx.destination); o.start(now); o.stop(now + 0.42);
+}
+
+/* ================= Particules ================= */
+const PMAX = 4000;
+const pMesh = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial(), PMAX);
+pMesh.frustumCulled = false; pMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+pMesh.instanceMatrix.array.fill(0);
+const pPos = new Float32Array(PMAX * 3), pVel = new Float32Array(PMAX * 3), pLife = new Float32Array(PMAX), pMax = new Float32Array(PMAX), pSize = new Float32Array(PMAX);
+const _c = new THREE.Color();
+for (let i = 0; i < PMAX; i++) pMesh.setColorAt(i, _c.setHex(0xffffff));
+scene.add(pMesh);
+let pNext = 0, pColorDirty = false;
+function spawnParticle(x, y, z, vx, vy, vz, colorHex, size, life) {
+  const i = pNext; pNext = (pNext + 1) % PMAX;
+  pPos[i * 3] = x; pPos[i * 3 + 1] = y; pPos[i * 3 + 2] = z;
+  pVel[i * 3] = vx; pVel[i * 3 + 1] = vy; pVel[i * 3 + 2] = vz;
+  pLife[i] = pMax[i] = life; pSize[i] = size;
+  pMesh.setColorAt(i, _c.setHex(colorHex)); pColorDirty = true;
+}
+function updateParticles(dt) {
+  const a = pMesh.instanceMatrix.array, drag = Math.exp(-dt * 1.2);
+  for (let i = 0; i < PMAX; i++) {
+    const o = i * 16;
+    if (pLife[i] <= 0) { if (a[o + 15] !== 0) { a.fill(0, o, o + 16); } continue; }
+    pLife[i] -= dt;
+    const j = i * 3;
+    pVel[j + 1] -= 9.8 * dt;
+    pVel[j] *= drag; pVel[j + 2] *= drag;
+    pPos[j] += pVel[j] * dt; pPos[j + 1] += pVel[j + 1] * dt; pPos[j + 2] += pVel[j + 2] * dt;
+    const s = pLife[i] > 0 ? pSize[i] * Math.sqrt(pLife[i] / pMax[i]) : 0;
+    if (pPos[j + 1] < s / 2) { pPos[j + 1] = s / 2; pVel[j + 1] *= -0.3; pVel[j] *= 0.6; pVel[j + 2] *= 0.6; }
+    a[o] = s; a[o + 1] = 0; a[o + 2] = 0; a[o + 3] = 0;
+    a[o + 4] = 0; a[o + 5] = s; a[o + 6] = 0; a[o + 7] = 0;
+    a[o + 8] = 0; a[o + 9] = 0; a[o + 10] = s; a[o + 11] = 0;
+    a[o + 12] = pPos[j]; a[o + 13] = pPos[j + 1]; a[o + 14] = pPos[j + 2]; a[o + 15] = 1;
+  }
+  pMesh.instanceMatrix.needsUpdate = true;
+  if (pColorDirty) { pMesh.instanceColor.needsUpdate = true; pColorDirty = false; }
+}
+
+/* ================= Chiffres de dégâts ================= */
+const numbers = [];
+class DmgNumber {
+  constructor(pos) {
+    this.canvas = document.createElement('canvas'); this.canvas.width = 256; this.canvas.height = 128;
+    this.tex = new THREE.CanvasTexture(this.canvas); this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex, depthTest: false, transparent: true }));
+    this.sprite.renderOrder = 999; this.sprite.position.copy(pos); scene.add(this.sprite);
+    this.value = 0; this.crit = false; this.ko = false; this.floating = false; this.t = 0; this.dirty = true;
+    numbers.push(this);
+  }
+  add(v, crit) { this.value += v; this.crit = this.crit || crit; this.dirty = true; }
+  draw() {
+    const g = this.canvas.getContext('2d'); g.clearRect(0, 0, 256, 128);
+    const txt = this.ko ? 'K.O. ' + Math.round(this.value) : String(Math.max(1, Math.round(this.value)));
+    g.font = `bold ${this.ko ? 64 : 88}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineWidth = 12; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(txt, 128, 66);
+    g.fillStyle = this.ko ? '#ff6b4a' : this.crit ? '#ffd23a' : '#ffffff'; g.fillText(txt, 128, 66);
+    this.tex.needsUpdate = true;
+    const k = 0.34 + Math.min(0.36, this.value / 700);
+    this.sprite.scale.set(k, k / 2, 1);
+  }
+  release(ko = false) { if (ko) this.ko = true; this.floating = true; this.t = 0; this.dirty = true; }
+  update(dt) {
+    if (this.dirty) { this.draw(); this.dirty = false; }
+    if (!this.floating) return true;
+    this.t += dt; this.sprite.position.y += dt * 0.45;
+    this.sprite.material.opacity = Math.max(0, 1 - this.t / 1.2);
+    if (this.t > 1.2) { scene.remove(this.sprite); this.tex.dispose(); this.sprite.material.dispose(); return false; }
+    return true;
+  }
+}
+function updateNumbers(dt) { for (let i = numbers.length - 1; i >= 0; i--) if (!numbers[i].update(dt)) numbers.splice(i, 1); }
+
+/* ================= Modèles voxel ================= */
+function buildModel(nx, ny, nz, shape, paint) {
+  const cx = (nx - 1) / 2, cz = (nz - 1) / 2;
+  const id = (i, j, k) => i + nx * (j + ny * k);
+  const solid = new Uint8Array(nx * ny * nz);
+  for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (shape(i - cx, j, k - cz)) solid[id(i, j, k)] = 1;
+  const front = new Int16Array(nx * ny).fill(-1);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) for (let k = nz - 1; k >= 0; k--) if (solid[id(i, j, k)]) { front[i + nx * j] = k; break; }
+  const isS = (i, j, k) => i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz && solid[id(i, j, k)];
+  const grid = new Int32Array(nx * ny * nz).fill(-1);
+  const pos = [], col = [], weak = [], vi = [], vj = [], vk = [];
+  for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    if (!solid[id(i, j, k)]) continue;
+    const surf = !(isS(i + 1, j, k) && isS(i - 1, j, k) && isS(i, j + 1, k) && isS(i, j - 1, k) && isS(i, j, k + 1) && isS(i, j, k - 1));
+    const p = paint(i - cx, j, k - cz, { depth: front[i + nx * j] - k, surf });
+    grid[id(i, j, k)] = col.length;
+    pos.push((i - cx) * V, (j + 0.5) * V, (k - cz) * V); col.push(p.c); weak.push(p.w ? 1 : 0); vi.push(i); vj.push(j); vk.push(k);
+  }
+  const count = col.length, height = ny * V;
+  let radius = 0; for (let n = 0; n < count; n++) radius = Math.max(radius, Math.hypot(pos[n * 3], pos[n * 3 + 1] - height / 2, pos[n * 3 + 2]));
+  return { nx, ny, nz, cx, cz, grid, pos: new Float32Array(pos), col, weak: new Uint8Array(weak), vi: new Int16Array(vi), vj: new Int16Array(vj), vk: new Int16Array(vk), count, height, radius: radius + V };
+}
+const tint = (hex, amt) => _c.setHex(hex).offsetHSL(0, 0, amt).getHex();
+
+const SLIME = {
+  name: 'Slime', hp: 500, hop: true,
+  build: () => buildModel(15, 12, 15,
+    (x, j, z) => { const y = j + 0.5 - 4.5, ry = y < 0 ? 4.5 : 7.5, r = 7.2; return (x * x + z * z) / (r * r) + (y * y) / (ry * ry) <= 1; },
+    (x, j, z, { depth }) => {
+      if (depth <= 1 && j >= 6 && j <= 7 && (x === -3 || x === -2 || x === 2 || x === 3)) {
+        const hl = depth === 0 && j === 7 && (x === -3 || x === 2);
+        return { c: hl ? 0xffffff : 0x1a1a2e, w: true };
+      }
+      if (depth === 0 && j === 4 && x >= -1 && x <= 1) return { c: 0x245a2c };
+      const base = _c.setHex(0x34a048).lerp(new THREE.Color(0x9cf08a), j / 11).getHex();
+      return { c: tint(base, (hash3(x, j, z) - 0.5) * 0.06) };
+    })
+};
+const MUSHROOM = {
+  name: 'Champi', hp: 400, hop: false,
+  build: () => buildModel(15, 13, 15,
+    (x, j, z) => {
+      const d2 = x * x + z * z;
+      if (j <= 5) return d2 <= 3.6 * 3.6;
+      if (j === 6) return d2 <= 6.4 * 6.4;
+      const h = j - 6.5, rr = 7.3 * Math.sqrt(Math.max(0, 1 - (h / 6) * (h / 6)));
+      return d2 <= rr * rr;
+    },
+    (x, j, z, { depth, surf }) => {
+      if (j <= 5) {
+        if (depth <= 1 && (j === 3 || j === 4) && (x === -2 || x === 2)) return { c: depth === 0 && j === 4 ? 0xffffff : 0x1a1a2e, w: true };
+        if (depth === 0 && j === 2 && (x === -3 || x === 3)) return { c: 0xf2a0a0 };
+        return { c: tint(0xf3e6c8, (hash3(x, j, z) - 0.5) * 0.06) };
+      }
+      if (j === 6) return { c: tint(0xd9c4a0, (hash3(x, j, z) - 0.5) * 0.06) };
+      if (surf && j >= 8 && hash3(x >> 1, j >> 1, z >> 1) < 0.22) return { c: 0xfff6ea };
+      return { c: tint(0xd63a34, (j - 9) * 0.015 + (hash3(x, j, z) - 0.5) * 0.05) };
+    })
+};
+
+/* ================= Monstres ================= */
+const _m = new THREE.Matrix4(), _v = new V3(), _w = new V3();
+const dirOf = a => new V3(Math.sin(a), 0, -Math.cos(a));
+let time = 0;
+
+class Monster {
+  constructor(kind, slot) {
+    this.kind = kind; this.slot = slot; this.model = kind.build();
+    const n = this.model.count;
+    this.mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0 });
+    this.mesh = new THREE.InstancedMesh(boxGeo, this.mat, n); this.mesh.frustumCulled = false;
+    for (let i = 0; i < n; i++) this.mesh.setColorAt(i, _c.setHex(this.model.col[i]));
+    this.group = new THREE.Group(); this.group.add(this.mesh); scene.add(this.group);
+    this.alive = new Uint8Array(n); this.kb = new V3(); this.num = null; this.yaw = 0; this.phase = rnd() * 6;
+    // barre de vie
+    this.bar = new THREE.Group();
+    const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.08), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6, depthWrite: false }));
+    const fg = new THREE.PlaneGeometry(0.58, 0.05); fg.translate(0.29, 0, 0);
+    this.fill = new THREE.Mesh(fg, new THREE.MeshBasicMaterial({ color: 0xe8453c })); this.fill.position.set(-0.29, 0, 0.002);
+    this.bar.add(bg, this.fill); scene.add(this.bar);
+    this.state = 'dead'; this.timer = 0.3 + slot * 0.2;
+    this.group.visible = false; this.bar.visible = false;
+  }
+  setVoxel(i, show) {
+    const a = this.mesh.instanceMatrix.array, o = i * 16, p = this.model.pos, s = show ? V * 0.97 : 0;
+    a.fill(0, o, o + 16); a[o] = s; a[o + 5] = s; a[o + 10] = s;
+    a[o + 12] = p[i * 3]; a[o + 13] = p[i * 3 + 1]; a[o + 14] = p[i * 3 + 2]; a[o + 15] = 1;
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+  voxelWorld(i, out) { const p = this.model.pos; return out.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]).applyMatrix4(this.group.matrixWorld); }
+  spawn() {
+    const n = this.model.count; this.alive.fill(1); for (let i = 0; i < n; i++) this.setVoxel(i, true);
+    this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
+    const d = dirOf(this.slot); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5);
+    this.group.scale.setScalar(0.001); this.group.visible = true; this.bar.visible = true;
+    this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.kb.set(0, 0, 0);
+  }
+  voxelAt(l) {
+    const m = this.model;
+    const i = Math.round(l.x / V + m.cx), j = Math.floor(l.y / V), k = Math.round(l.z / V + m.cz);
+    if (i < 0 || j < 0 || k < 0 || i >= m.nx || j >= m.ny || k >= m.nz) return -1;
+    const id = m.grid[i + m.nx * (j + m.ny * k)];
+    return id >= 0 && this.alive[id] ? id : -1;
+  }
+  addDamage(dmg, crit, worldPoint) {
+    this.hp -= dmg;
+    if (!this.num) {
+      _w.copy(playerPos).sub(worldPoint).setY(0).normalize().multiplyScalar(0.3);
+      this.num = new DmgNumber(_w.add(worldPoint).add(_v.set(0, 0.18, 0)));
+    }
+    this.num.add(dmg, crit);
+    this.lastHit = time;
+  }
+  cutVoxel(id, speed, point, vel) {
+    this.alive[id] = 0; this.aliveCount--; this.setVoxel(id, false);
+    const crit = !!this.model.weak[id];
+    this.addDamage(DMG_PER_VOXEL * speedMult(speed) * (crit ? WEAK_MULT : 1), crit, point);
+    this.voxelWorld(id, _w);
+    const c = this.model.col[id];
+    for (let n = 0; n < 2; n++)
+      spawnParticle(_w.x, _w.y, _w.z, vel.x * 0.25 + (rnd() - 0.5) * 1.4, vel.y * 0.25 + rnd() * 1.6 + 0.4, vel.z * 0.25 + (rnd() - 0.5) * 1.4, c, V * (0.45 + rnd() * 0.3), 0.6 + rnd() * 0.6);
+    this.kb.x += vel.x * 0.0004; this.kb.z += vel.z * 0.0004;
+    if (this.kb.length() > 0.03) this.kb.setLength(0.03);
+    this.mat.emissiveIntensity = 0.55; this.pendingDetach = true;
+  }
+  checkDetached() {
+    const m = this.model, n = m.count, alive = this.alive, seen = new Uint8Array(n), stack = [];
+    for (let i = 0; i < n; i++) if (alive[i] && m.vj[i] === 0) { seen[i] = 1; stack.push(i); }
+    const nb = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    while (stack.length) {
+      const id = stack.pop(), i = m.vi[id], j = m.vj[id], k = m.vk[id];
+      for (const [a, b, c] of nb) {
+        const x = i + a, y = j + b, z = k + c;
+        if (x < 0 || y < 0 || z < 0 || x >= m.nx || y >= m.ny || z >= m.nz) continue;
+        const o = m.grid[x + m.nx * (y + m.ny * z)];
+        if (o >= 0 && alive[o] && !seen[o]) { seen[o] = 1; stack.push(o); }
+      }
+    }
+    let det = 0;
+    for (let i = 0; i < n; i++) if (alive[i] && !seen[i]) {
+      alive[i] = 0; this.aliveCount--; this.setVoxel(i, false); det++;
+      this.voxelWorld(i, _w);
+      spawnParticle(_w.x, _w.y, _w.z, (rnd() - 0.5) * 0.8, rnd() * 0.6, (rnd() - 0.5) * 0.8, m.col[i], V * 0.85, 0.8 + rnd() * 0.7);
+    }
+    if (det) {
+      this.voxelWorld(0, _w); _w.y = this.group.position.y + m.height * 0.8;
+      this.addDamage(det * DMG_PER_VOXEL, false, _w); playHit(1.5);
+    }
+  }
+  kill() {
+    this.state = 'dead'; this.timer = 2.5; kills++; drawSign();
+    const cx = this.group.position.x, cy = this.group.position.y + this.model.height / 2, cz = this.group.position.z;
+    for (let i = 0; i < this.model.count; i++) if (this.alive[i]) {
+      this.voxelWorld(i, _w);
+      _v.set(_w.x - cx, _w.y - cy, _w.z - cz).normalize();
+      // pas de cubes projetés vers le visage du joueur
+      const tp = _sv.set(playerPos.x - cx, 0, playerPos.z - cz).normalize(), dp = _v.dot(tp);
+      if (dp > 0) _v.addScaledVector(tp, -1.6 * dp);
+      _v.multiplyScalar(1.0 + rnd() * 1.8);
+      spawnParticle(_w.x, _w.y, _w.z, _v.x, _v.y + 1.5, _v.z, this.model.col[i], V * (0.7 + rnd() * 0.3), 0.9 + rnd() * 0.8);
+      this.alive[i] = 0;
+    }
+    this.group.visible = false; this.bar.visible = false;
+    if (this.num) { this.num.release(true); this.num = null; }
+    playDeath(); haptic(1, 120);
+  }
+  update(dt) {
+    if (this.state === 'dead') { this.timer -= dt; if (this.timer <= 0) this.spawn(); return; }
+    const g = this.group;
+    if (this.state === 'spawning') {
+      this.t += dt; g.scale.setScalar(Math.max(0.001, easeOutBack(Math.min(1, this.t / 0.6))));
+      if (this.t >= 0.6) { this.state = 'alive'; g.scale.setScalar(1); }
+    }
+    // déplacement vers sa place devant le joueur
+    const d = dirOf(this.slot), tx = playerPos.x + d.x * 1.25, tz = playerPos.z + d.z * 1.25;
+    let dx = tx - g.position.x, dz = tz - g.position.z; const dist = Math.hypot(dx, dz);
+    const moving = dist > 0.04;
+    if (moving) { const st = Math.min(dist, 1.1 * dt); g.position.x += dx / dist * st; g.position.z += dz / dist * st; }
+    g.position.x += this.kb.x * 60 * dt; g.position.z += this.kb.z * 60 * dt; this.kb.multiplyScalar(Math.exp(-dt * 8));
+    // regarde le joueur
+    const want = Math.atan2(playerPos.x - g.position.x, playerPos.z - g.position.z);
+    let dy = want - this.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); this.yaw += dy * Math.min(1, dt * 6);
+    g.rotation.y = this.yaw;
+    // animation
+    if (this.state === 'alive') {
+      this.phase += dt * (moving ? 8 : 3);
+      if (this.kind.hop) {
+        const h = Math.abs(Math.sin(this.phase));
+        g.position.y = moving ? h * 0.14 : 0;
+        const sq = moving ? 1 + (h - 0.5) * 0.12 : 1 + Math.sin(this.phase) * 0.03;
+        g.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
+      } else {
+        g.position.y = 0; g.rotation.z = Math.sin(this.phase) * (moving ? 0.1 : 0.03);
+      }
+    }
+    this.mat.emissiveIntensity *= Math.exp(-dt * 14);
+    g.updateMatrixWorld();
+    if (this.pendingDetach && time - this.lastHit > 0.12) { this.pendingDetach = false; this.checkDetached(); }
+    if (this.num && time - this.lastHit > 0.35) { this.num.release(); this.num = null; }
+    if (this.state === 'alive' && (this.hp <= 0 || this.aliveCount <= 0)) { this.kill(); return; }
+    // barre de vie
+    this.bar.position.set(g.position.x, g.position.y + this.model.height * g.scale.y + 0.22, g.position.z);
+    this.bar.lookAt(playerPos);
+    this.fill.scale.x = Math.max(0.001, this.hp / this.maxHp);
+  }
+}
+const monsters = [new Monster(SLIME, -0.5), new Monster(MUSHROOM, 0.5)];
+
+/* ================= Épée ================= */
+const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdfe7ef, metalness: 0.5, roughness: 0.3, emissive: 0x112233 });
+const goldMat = new THREE.MeshLambertMaterial({ color: 0xd4a72c });
+const sword = new THREE.Group();
+{
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.02, 0.16, 8), new THREE.MeshLambertMaterial({ color: 0x4a2f1b }));
+  handle.rotation.x = Math.PI / 2; handle.position.z = 0.01;
+  const pommel = new THREE.Mesh(boxGeo, goldMat); pommel.scale.setScalar(0.04); pommel.position.z = 0.1;
+  const guard = new THREE.Mesh(boxGeo, goldMat); guard.scale.set(0.2, 0.03, 0.035); guard.position.z = -0.075;
+  const blade = new THREE.Mesh(boxGeo, bladeMat); blade.scale.set(0.055, 0.012, BLADE_LEN); blade.position.z = -(BLADE_START + BLADE_LEN / 2);
+  sword.add(handle, pommel, guard, blade);
+}
+const swordState = { holder: null, hasPrev: false, prevB: new V3(), prevT: new V3(), tipSpeed: 0 };
+function giveSword(holder) {
+  if (swordState.holder?.userData.fist) swordState.holder.userData.fist.visible = true;
+  holder.add(sword); swordState.holder = holder; swordState.hasPrev = false;
+  if (holder.userData.fist) holder.userData.fist.visible = false;
+}
+function dropSword() {
+  if (swordState.holder?.userData.fist) swordState.holder.userData.fist.visible = true;
+  sword.removeFromParent(); swordState.holder = null; swordState.hasPrev = false;
+}
+function haptic(intensity, ms) {
+  const gp = swordState.holder?.userData.source?.gamepad; if (!gp) return;
+  try {
+    const h = gp.hapticActuators?.[0];
+    if (h?.pulse) h.pulse(intensity, ms);
+    else gp.vibrationActuator?.playEffect?.('dual-rumble', { duration: ms, strongMagnitude: intensity, weakMagnitude: intensity });
+  } catch (e) { }
+}
+
+// manettes
+const skinMat = new THREE.MeshLambertMaterial({ color: 0xe0b48f });
+const grips = [];
+for (let i = 0; i < 2; i++) {
+  const grip = renderer.xr.getControllerGrip(i);
+  const fist = new THREE.Mesh(boxGeo, skinMat); fist.scale.set(0.07, 0.075, 0.1); grip.add(fist); grip.userData.fist = fist;
+  grip.addEventListener('connected', e => {
+    grip.userData.source = e.data;
+    if (!swordState.holder || e.data.handedness === 'right') giveSword(grip);
+  });
+  grip.addEventListener('disconnected', () => {
+    grip.userData.source = null;
+    if (swordState.holder === grip) { const other = grips.find(g => g !== grip && g.userData.source); other ? giveSword(other) : dropSword(); }
+  });
+  grip.addEventListener('selectstart', () => { if (swordState.holder !== grip) giveSword(grip); });
+  scene.add(grip); grips.push(grip);
+}
+
+// traînée de lame
+const TN = 16;
+const tPos = new Float32Array(TN * 6), tCol = new Float32Array(TN * 8);
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(tPos, 3).setUsage(THREE.DynamicDrawUsage));
+trailGeo.setAttribute('color', new THREE.BufferAttribute(tCol, 4).setUsage(THREE.DynamicDrawUsage));
+{ const idx = []; for (let i = 0; i < TN - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); } trailGeo.setIndex(idx); }
+const trail = new THREE.Mesh(trailGeo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+trail.frustumCulled = false; scene.add(trail);
+const hist = Array.from({ length: TN }, () => [new V3(), new V3()]);
+function updateTrail(B, T, k, reset) {
+  if (reset) hist.forEach(h => { h[0].lerpVectors(B, T, 0.35); h[1].copy(T); });
+  else { const last = hist.pop(); last[0].lerpVectors(B, T, 0.35); last[1].copy(T); hist.unshift(last); }
+  for (let i = 0; i < TN; i++) {
+    hist[i][0].toArray(tPos, i * 6); hist[i][1].toArray(tPos, i * 6 + 3);
+    const al = k * (1 - i / (TN - 1)) * 0.55;
+    tCol.set([0.55, 0.85, 1, al * 0.4, 0.75, 0.95, 1, al], i * 8);
+  }
+  trailGeo.attributes.position.needsUpdate = true; trailGeo.attributes.color.needsUpdate = true;
+}
+
+// balayage : teste chaque voxel traversé par la lame entre deux images
+const _B = new V3(), _T = new V3(), _b = new V3(), _t = new V3(), _p = new V3(), _l = new V3(), _sv = new V3(), _inv = new THREE.Matrix4();
+const tipVel = new V3(), baseVel = new V3(), _mid = new V3(), _cen = new V3();
+function sweep(b0, t0, b1, t1, vb, vt) {
+  const along = Math.ceil(BLADE_LEN / (V * 0.45));
+  const move = Math.max(t0.distanceTo(t1), b0.distanceTo(b1));
+  const steps = Math.min(48, Math.max(1, Math.ceil(move / (V * 0.45))));
+  _mid.lerpVectors(b1, t1, 0.5);
+  for (const m of monsters) {
+    if (m.state !== 'alive') continue;
+    _cen.set(0, m.model.height / 2, 0).applyMatrix4(m.group.matrixWorld);
+    if (_cen.distanceTo(_mid) > m.model.radius * 1.2 + BLADE_LEN * 0.5 + move) continue;
+    _inv.copy(m.group.matrixWorld).invert();
+    let hits = 0, intensity = 0;
+    for (let s = 1; s <= steps; s++) {
+      const f = s / steps; _b.lerpVectors(b0, b1, f); _t.lerpVectors(t0, t1, f);
+      for (let a = 0; a <= along; a++) {
+        const g = a / along, sp = vb + (vt - vb) * g;
+        if (sp < MIN_CUT_SPEED) continue;
+        _p.lerpVectors(_b, _t, g); _l.copy(_p).applyMatrix4(_inv);
+        const id = m.voxelAt(_l);
+        if (id >= 0) { _sv.lerpVectors(baseVel, tipVel, g); m.cutVoxel(id, sp, _p, _sv); hits++; intensity = Math.max(intensity, speedMult(sp)); }
+      }
+    }
+    if (hits) { haptic(Math.min(1, 0.25 + hits * 0.03 * intensity), 25); playHit(intensity); }
+  }
+}
+function updateSword(dt) {
+  if (!swordState.holder) { trail.visible = false; return; }
+  trail.visible = true;
+  sword.updateWorldMatrix(true, false);
+  _B.set(0, 0, -BLADE_START).applyMatrix4(sword.matrixWorld);
+  _T.set(0, 0, -(BLADE_START + BLADE_LEN)).applyMatrix4(sword.matrixWorld);
+  let reset = !swordState.hasPrev;
+  if (swordState.hasPrev) {
+    const jump = _T.distanceTo(swordState.prevT);
+    if (jump > 1.0) reset = true; // saut de suivi : on ignore
+    else {
+      tipVel.subVectors(_T, swordState.prevT).divideScalar(dt); baseVel.subVectors(_B, swordState.prevB).divideScalar(dt);
+      const vt = tipVel.length(), vb = baseVel.length();
+      swordState.tipSpeed += (vt - swordState.tipSpeed) * 0.5;
+      if (vt > MIN_CUT_SPEED) sweep(swordState.prevB, swordState.prevT, _B, _T, vb, vt);
+    }
+  }
+  if (reset) swordState.tipSpeed = 0;
+  swordState.prevB.copy(_B); swordState.prevT.copy(_T); swordState.hasPrev = true;
+  const k = THREE.MathUtils.clamp((swordState.tipSpeed - MIN_CUT_SPEED) / 4, 0, 1);
+  bladeMat.emissive.setRGB(0.07 + 0.25 * k, 0.12 + 0.55 * k, 0.2 + 0.8 * k);
+  updateTrail(_B, _T, k, reset);
+}
+
+/* ================= Mode souris ================= */
+const deskHand = new THREE.Group(); scene.add(deskHand);
+const mouse = new THREE.Vector2(0.15, -0.35), ray = new THREE.Raycaster(), _sh = new V3(), _hd = new V3(), FWD = new V3(0, 0, -1);
+addEventListener('pointermove', e => { mouse.x = e.clientX / innerWidth * 2 - 1; mouse.y = -(e.clientY / innerHeight) * 2 + 1; });
+function updateDeskHand() {
+  ray.setFromCamera(mouse, camera);
+  _hd.copy(ray.ray.origin).addScaledVector(ray.ray.direction, 0.6);
+  _sh.set(0.28, -0.4, -0.05); camera.localToWorld(_sh);
+  deskHand.position.copy(_hd);
+  deskHand.quaternion.setFromUnitVectors(FWD, _v.subVectors(_hd, _sh).normalize());
+}
+
+/* ================= Interface ================= */
+const $ = id => document.getElementById(id);
+const ui = $('ui'), statusEl = $('status'), vrBtn = $('vrBtn'), deskBtn = $('deskBtn'), hud = $('hud');
+let mode = 'menu';
+function showMenu() { mode = 'menu'; ui.hidden = false; hud.hidden = true; dropSword(); camera.position.set(0, 1.6, 0); camera.lookAt(0, 0.55, -1.3); }
+deskBtn.onclick = () => { initAudio(); mode = 'desktop'; ui.hidden = true; hud.hidden = false; giveSword(deskHand); };
+addEventListener('keydown', e => { if (e.key === 'Escape' && mode === 'desktop') showMenu(); });
+vrBtn.onclick = async () => {
+  initAudio();
+  try {
+    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] });
+    dropSword(); mode = 'vr'; ui.hidden = true; hud.hidden = true;
+    session.addEventListener('end', () => { showMenu(); statusEl.textContent = 'Session VR terminée. Tu peux y retourner.'; });
+    await renderer.xr.setSession(session);
+  } catch (e) {
+    showMenu();
+    statusEl.textContent = 'Impossible de lancer la VR (' + e.name + ') : ' + e.message;
+  }
+};
+(async () => {
+  let ok = false, err = null;
+  try { ok = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-vr'); } catch (e) { err = e; }
+  if (ok) { vrBtn.hidden = false; statusEl.textContent = 'Casque détecté. Prêt !'; }
+  else if (err) statusEl.textContent = 'La VR est bloquée dans cette vue (' + err.name + '). Ouvre la page directement dans le navigateur du Quest.';
+  else if (!navigator.xr) statusEl.textContent = 'Pas de WebXR ici. Sur le Quest, ouvre cette page dans le navigateur Meta Quest. Sinon, teste à la souris.';
+  else statusEl.textContent = 'Pas de casque VR détecté. Tu peux tester à la souris.';
+})();
+addEventListener('resize', () => {
+  if (renderer.xr.isPresenting) return;
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ================= Boucle ================= */
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05) || 0.016; time += dt;
+  if (mode === 'desktop') updateDeskHand();
+  camera.getWorldPosition(playerPos);
+  updateSword(dt);
+  for (const m of monsters) m.update(dt);
+  updateParticles(dt);
+  updateNumbers(dt);
+  renderer.render(scene, camera);
+});
+window.__game = { monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
+</script>
+</body>
+</html>
