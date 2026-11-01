@@ -29,7 +29,7 @@
   <button id="deskBtn" class="ghost">Tester à la souris</button>
   <p class="small">Joue debout, avec environ 2 m libres devant toi.<br>Gâchette : prendre l'épée dans cette main.</p>
 </div></div>
-<div id="hud" hidden>Bouge la souris vite pour trancher · Maj : coup du plat · Échap : menu</div>
+<div id="hud" hidden>Souris : trancher · Maj : coup du plat · ZQSD/WASD : marcher · ← → : tourner · Échap : menu</div>
 
 <script type="module">
 import * as THREE from 'three';
@@ -44,6 +44,15 @@ const DMG_PER_VOXEL = 1;      // dégâts de base par voxel traversé
 const WEAK_MULT = 3;          // multiplicateur sur les points faibles (yeux)
 const PLAYER_LEVEL = 5;       // niveau fixe du joueur pour le test
 const PLATE_SHOW_TIME = 10;   // secondes d'affichage de la plaque après le dernier échange de coups
+const MOVE_SPEED = 2.0;       // déplacement au joystick (m/s)
+const SNAP_ANGLE = Math.PI / 6; // rotation par cran (30°)
+// Style des plaques : tout ce qui touche à leur apparence est ici
+const PLATE_STYLE = {
+  bg: 'rgba(31,31,29,.92)', radius: 16, border: 6,
+  nameFont: 'bold 38px system-ui, sans-serif', badgeFont: 'bold 28px system-ui, sans-serif', hpFont: 'bold 28px system-ui, sans-serif',
+  badgeText: '#1f1f1d', roleText: '#b4b2a9', hpBg: '#3a3a37', hpFill: '#d8433a', hpText: '#ffffff',
+  scrambleChars: '#%&?@§*$!¤', scrambleSpeed: 0.07,
+};
 const CAT_COLORS = { npc: '#D3CBB8', passive: '#8BCF5A', lower: '#F2D45C', equal: '#F09A3E', higher: '#E5484D', boss: '#A27BF0', legendary: '#4FA3F7' };
 const speedMult = s => THREE.MathUtils.clamp(s / 2.5, 0.4, 3);
 
@@ -67,8 +76,9 @@ scene.background = new THREE.Color(0x8ec5ff);
 scene.fog = new THREE.Fog(0x8ec5ff, 18, 55);
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 120);
 camera.position.set(0, 1.6, 0);
-camera.lookAt(0, 0.55, -1.3);
-scene.add(camera);
+camera.rotation.set(-0.68, 0, 0);
+const rig = new THREE.Group(); // le « corps » du joueur : se déplace et tourne au joystick
+scene.add(rig); rig.add(camera);
 
 scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x4d6b38, 1.4));
 const sun = new THREE.DirectionalLight(0xfff2d8, 2.2);
@@ -139,8 +149,8 @@ function drawSign() {
   g.font = 'bold 76px system-ui, sans-serif'; g.fillText('VOXEL BLADE', 512, 110);
   g.font = '34px system-ui, sans-serif'; g.globalAlpha = .8; g.fillText('prototype — test de découpe', 512, 160); g.globalAlpha = 1;
   g.font = '38px system-ui, sans-serif'; g.textAlign = 'left';
-  ['• Seul le tranchant coupe : chaque voxel = dégâts', '• Plus le coup est rapide, plus ça fait mal', '• Plat de la lame ou coup lent : ça repousse', '• Les yeux sont des points faibles (×3)', '• Gâchette : changer l\'épée de main']
-    .forEach((t, i) => g.fillText(t, 60, 232 + i * 56));
+  ['• Seul le tranchant coupe : chaque voxel = dégâts', '• Plus le coup est rapide, plus ça fait mal', '• Plat de la lame ou coup lent : ça repousse', '• Les yeux sont des points faibles (×3)', '• Gâchette : changer l\'épée de main', '• Joystick gauche : marcher · droit : tourner']
+    .forEach((t, i) => g.fillText(t, 60, 222 + i * 52));
   g.textAlign = 'center'; g.font = 'bold 46px system-ui, sans-serif'; g.fillStyle = '#ffd23a';
   g.fillText('Monstres vaincus : ' + kills, 512, 545);
   signTex.needsUpdate = true;
@@ -347,6 +357,11 @@ function plateCategory(m) {
   const d = k.level - PLAYER_LEVEL;
   return d <= -3 ? 'lower' : d >= 3 ? 'higher' : 'equal';
 }
+function scramble(seedTick) {
+  const c = PLATE_STYLE.scrambleChars; let out = '';
+  for (let i = 0; i < 2; i++) out += c[Math.floor(hash3(seedTick, i, 7) * c.length)];
+  return out;
+}
 const fmt = n => Math.max(0, Math.ceil(n)).toLocaleString('fr-FR');
 class Plate {
   constructor() {
@@ -357,32 +372,41 @@ class Plate {
     this.key = ''; this.alpha = 0;
   }
   draw(m) {
-    const cat = plateCategory(m), k = m.kind, hp = fmt(m.hp), key = cat + '|' + hp;
+    const S = PLATE_STYLE, cat = plateCategory(m), k = m.kind, hp = fmt(m.hp);
+    // niveau des légendaires : caractères qui défilent, illisible
+    const lvl = cat === 'legendary' ? scramble(Math.floor(time / S.scrambleSpeed)) : String(k.level);
+    const key = cat + '|' + hp + '|' + lvl;
     if (key === this.key) return; this.key = key;
-    const g = this.canvas.getContext('2d'), col = CAT_COLORS[cat], W = 512, H = k.cat === 'npc' ? 76 : 144;
-    g.clearRect(0, 0, 512, 144);
-    g.fillStyle = 'rgba(31,31,29,.92)'; g.strokeStyle = col; g.lineWidth = 6;
-    g.beginPath(); g.roundRect(4, 4, W - 8, H - 8, 16); g.fill(); g.stroke();
+    const g = this.canvas.getContext('2d'), col = CAT_COLORS[cat], W = 512, H = 144;
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = S.bg; g.strokeStyle = col; g.lineWidth = S.border;
+    g.beginPath(); g.roundRect(4, 4, W - 8, H - 8, S.radius); g.fill(); g.stroke();
     let x = 26;
-    if (cat === 'boss' || cat === 'legendary') { g.fillStyle = col; g.font = 'bold 40px system-ui, sans-serif'; g.textBaseline = 'middle'; g.fillText(cat === 'boss' ? '☠' : '★', x, 42); x += 46; }
-    // badge de niveau (ou rôle pour un PNJ)
-    const badge = k.cat === 'npc' ? (k.role || 'PNJ') : (cat === 'boss' ? 'Boss · ' : cat === 'legendary' ? 'Légendaire · ' : '') + 'Niv. ' + k.level;
-    g.font = 'bold 28px system-ui, sans-serif'; g.textBaseline = 'middle';
-    const bw = g.measureText(badge).width + 24;
-    if (k.cat === 'npc') { g.fillStyle = '#b4b2a9'; g.textAlign = 'right'; g.fillText(badge, W - 26, 40); }
-    else { g.fillStyle = col; g.beginPath(); g.roundRect(W - 22 - bw, 22, bw, 40, 8); g.fill(); g.fillStyle = '#1f1f1d'; g.textAlign = 'center'; g.fillText(badge, W - 22 - bw / 2, 43); }
+    g.textBaseline = 'middle';
+    if (cat === 'boss' || cat === 'legendary') { g.fillStyle = col; g.font = S.nameFont; g.textAlign = 'left'; g.fillText(cat === 'boss' ? '☠' : '★', x, 42); x += 46; }
+    // badge : rôle pour un PNJ, sinon niveau
+    g.font = S.badgeFont;
+    let bw;
+    if (k.cat === 'npc') {
+      const role = k.role || 'PNJ'; bw = g.measureText(role).width + 8;
+      g.fillStyle = S.roleText; g.textAlign = 'right'; g.fillText(role, W - 26, 42);
+    } else {
+      const badge = 'Niv. ' + lvl; // boss et légendaires sont signalés par leur icône
+      bw = g.measureText(cat === 'legendary' ? badge.replace(lvl, 'WW') : badge).width + 24; // largeur stable pendant le défilement
+      g.fillStyle = col; g.beginPath(); g.roundRect(W - 22 - bw, 22, bw, 40, 8); g.fill();
+      g.fillStyle = S.badgeText; g.textAlign = 'center'; g.fillText(badge, W - 22 - bw / 2, 43);
+    }
     // nom
-    g.textAlign = 'left'; g.fillStyle = col; g.font = 'bold 38px system-ui, sans-serif';
+    g.textAlign = 'left'; g.fillStyle = col; g.font = S.nameFont;
     let name = k.name; const maxW = W - 22 - bw - x - 16;
     while (g.measureText(name).width > maxW && name.length > 3) name = name.slice(0, -2) + '…';
     g.fillText(name, x, 42);
-    if (k.cat !== 'npc') {
-      g.fillStyle = '#3a3a37'; g.beginPath(); g.roundRect(22, 80, W - 44, 40, 8); g.fill();
-      const r = Math.max(0, Math.min(1, m.hp / m.maxHp));
-      if (r > 0) { g.fillStyle = '#d8433a'; g.beginPath(); g.roundRect(22, 80, Math.max(16, (W - 44) * r), 40, 8); g.fill(); }
-      g.fillStyle = '#ffffff'; g.font = 'bold 28px system-ui, sans-serif'; g.textAlign = 'center';
-      g.fillText(hp + ' / ' + fmt(m.maxHp), W / 2, 101);
-    }
+    // barre de vie (tout le monde, PNJ compris)
+    g.fillStyle = S.hpBg; g.beginPath(); g.roundRect(22, 80, W - 44, 40, 8); g.fill();
+    const r = Math.max(0, Math.min(1, m.hp / m.maxHp));
+    if (r > 0) { g.fillStyle = S.hpFill; g.beginPath(); g.roundRect(22, 80, Math.max(16, (W - 44) * r), 40, 8); g.fill(); }
+    g.fillStyle = S.hpText; g.font = S.hpFont; g.textAlign = 'center';
+    g.fillText(hp + ' / ' + fmt(m.maxHp), W / 2, 101);
     this.tex.needsUpdate = true;
   }
   update(dt, m, show, topY) {
@@ -424,7 +448,7 @@ class Monster {
     const n = this.model.count; this.alive.fill(1); for (let i = 0; i < n; i++) this.setVoxel(i, true);
     this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
     if (this.kind.behavior === 'passive') { this.pickWaypoint(); this.group.position.copy(this.wp); this.pickWaypoint(); }
-    else { const d = dirOf(this.slot); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5); }
+    else { const d = dirOf(this.slot - rig.rotation.y); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5); }
     this.group.scale.setScalar(0.001); this.group.visible = true;
     this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0;
     this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.vel.set(0, 0, 0); this.stun = 0; this.jy = 0; this.jv = 0;
@@ -533,7 +557,7 @@ class Monster {
         if (l < 0.1) { this.wait = 1 + rnd() * 2.5; this.pickWaypoint(); mx = mz = 0; } else { mx /= l; mz /= l; step = Math.min(l, 0.6 * dt); }
       }
     } else { // va se placer devant le joueur
-      const d = dirOf(this.slot);
+      const d = dirOf(this.slot - rig.rotation.y);
       mx = playerPos.x + d.x * 1.25 - g.position.x; mz = playerPos.z + d.z * 1.25 - g.position.z; const l = Math.hypot(mx, mz);
       if (l > 0.04) { mx /= l; mz /= l; step = Math.min(l, 1.1 * dt); } else mx = mz = 0;
     }
@@ -625,7 +649,7 @@ for (let i = 0; i < 2; i++) {
     if (swordState.holder === grip) { const other = grips.find(g => g !== grip && g.userData.source); other ? giveSword(other) : dropSword(); }
   });
   grip.addEventListener('selectstart', () => { if (swordState.holder !== grip) giveSword(grip); });
-  scene.add(grip); grips.push(grip);
+  rig.add(grip); grips.push(grip);
 }
 
 // traînée de lame
@@ -754,11 +778,49 @@ function updateDeskHand() {
   deskHand.quaternion.setFromRotationMatrix(_mb);
 }
 
+/* ================= Déplacement ================= */
+const keys = {};
+addEventListener('keydown', e => { keys[e.code] = true; });
+addEventListener('keyup', e => { keys[e.code] = false; });
+const _fw = new V3(), _rt = new V3(), _h0 = new V3(), _h1 = new V3();
+let snapReady = true;
+function snapTurn(a) { // tourne autour de la tête, pas autour du centre de la pièce
+  camera.getWorldPosition(_h0); rig.rotation.y += a; rig.updateMatrixWorld(true); camera.getWorldPosition(_h1);
+  rig.position.x += _h0.x - _h1.x; rig.position.z += _h0.z - _h1.z; swordState.hasPrev = false;
+}
+function updateLocomotion(dt) {
+  let mx = 0, mz = 0, turn = 0;
+  if (mode === 'vr') {
+    for (const src of renderer.xr.getSession()?.inputSources || []) {
+      const gp = src.gamepad; if (!gp || gp.axes.length < 4) continue;
+      if (src.handedness === 'left') { mx += gp.axes[2]; mz += gp.axes[3]; }
+      else if (src.handedness === 'right') turn = gp.axes[2];
+    }
+  } else if (mode === 'desktop') {
+    if (keys.KeyW || keys.KeyZ || keys.ArrowUp) mz -= 1;
+    if (keys.KeyS || keys.ArrowDown) mz += 1;
+    if (keys.KeyA || keys.KeyQ) mx -= 1;
+    if (keys.KeyD) mx += 1;
+    turn = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0);
+  }
+  // rotation par crans (plus confortable que la rotation continue)
+  if (Math.abs(turn) > 0.7 && snapReady) { snapReady = false; snapTurn(-Math.sign(turn) * SNAP_ANGLE); }
+  else if (Math.abs(turn) < 0.3) snapReady = true;
+  // déplacement dans la direction du regard
+  const len = Math.hypot(mx, mz);
+  if (len < 0.15) return;
+  if (len > 1) { mx /= len; mz /= len; }
+  camera.getWorldDirection(_fw); _fw.y = 0; _fw.normalize(); _rt.set(-_fw.z, 0, _fw.x);
+  rig.position.addScaledVector(_fw, -mz * MOVE_SPEED * dt).addScaledVector(_rt, mx * MOVE_SPEED * dt);
+  const r = Math.hypot(rig.position.x, rig.position.z);
+  if (r > 28) { rig.position.x *= 28 / r; rig.position.z *= 28 / r; }
+}
+
 /* ================= Interface ================= */
 const $ = id => document.getElementById(id);
 const ui = $('ui'), statusEl = $('status'), vrBtn = $('vrBtn'), deskBtn = $('deskBtn'), hud = $('hud');
 let mode = 'menu';
-function showMenu() { mode = 'menu'; ui.hidden = false; hud.hidden = true; dropSword(); camera.position.set(0, 1.6, 0); camera.lookAt(0, 0.55, -1.3); }
+function showMenu() { mode = 'menu'; ui.hidden = false; hud.hidden = true; dropSword(); camera.position.set(0, 1.6, 0); camera.rotation.set(-0.68, 0, 0); }
 deskBtn.onclick = () => { initAudio(); mode = 'desktop'; ui.hidden = true; hud.hidden = false; giveSword(deskHand); };
 addEventListener('keydown', e => { if (e.key === 'Escape' && mode === 'desktop') showMenu(); });
 vrBtn.onclick = async () => {
@@ -793,6 +855,7 @@ addEventListener('resize', () => {
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05) || 0.016; time += dt;
+  updateLocomotion(dt);
   if (mode === 'desktop') updateDeskHand();
   camera.getWorldPosition(playerPos);
   updateSword(dt);
@@ -801,7 +864,7 @@ renderer.setAnimationLoop(() => {
   updateNumbers(dt);
   renderer.render(scene, camera);
 });
-window.__game = { monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
+window.__game = { rig, monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
 </script>
 </body>
 </html>
