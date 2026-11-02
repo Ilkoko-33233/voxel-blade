@@ -48,10 +48,23 @@ const MOVE_SPEED = 2.0;       // déplacement au joystick (m/s)
 const SNAP_ANGLE = Math.PI / 6; // rotation par cran (30°)
 // Style des plaques : tout ce qui touche à leur apparence est ici
 const PLATE_STYLE = {
-  bg: 'rgba(31,31,29,.92)', radius: 16, border: 6,
-  nameFont: 'bold 38px system-ui, sans-serif', badgeFont: 'bold 28px system-ui, sans-serif', hpFont: 'bold 28px system-ui, sans-serif',
-  badgeText: '#1f1f1d', roleText: '#b4b2a9', hpBg: '#3a3a37', hpFill: '#d8433a', hpText: '#ffffff',
+  nameFont: 'italic bold 50px system-ui, sans-serif',
+  hpFont: 'bold 46px system-ui, sans-serif',
+  lvFont: '42px system-ui, sans-serif',
+  glow: 16,              // halo lumineux autour des traits
+  line: 5,               // épaisseur du cadre
+  bodyDark: 0.82,        // fond du cadre : couleur mêlée de noir (0..1)
+  emptyDark: 0.72,       // partie vide de la barre de vie
+  textLight: 0.45,       // textes : couleur mêlée de blanc (0..1)
   scrambleChars: '#%&?@§*$!¤', scrambleSpeed: 0.07,
+};
+// symboles en pixels (11 x 10) selon le type de créature
+const PLATE_ICONS = {
+  monster: ['.###...###.', '#####.#####', '###########', '###########', '###########', '.#########.', '..#######..', '...#####...', '....###....', '.....#.....'],
+  boss: ['..#######..', '.#########.', '###########', '##...#...##', '##...#...##', '###########', '.####.####.', '..#######..', '..#.#.#.#..', '..#######..'],
+  legendary: ['.....#.....', '.....#.....', '....###....', '###########', '.#########.', '..#######..', '..#######..', '.####.####.', '.###...###.', '.#.......#.'],
+  npc: ['.#########.', '###########', '###########', '##.##.##.##', '###########', '###########', '.#########.', '..##.......', '..#........', '...........'],
+  player: ['###########', '###########', '#####.#####', '####...####', '#####.#####', '.#########.', '.#########.', '..#######..', '...#####...', '.....#.....'],
 };
 const CAT_COLORS = { npc: '#D3CBB8', passive: '#8BCF5A', lower: '#F2D45C', equal: '#F09A3E', higher: '#E5484D', boss: '#A27BF0', legendary: '#4FA3F7' };
 const speedMult = s => THREE.MathUtils.clamp(s / 2.5, 0.4, 3);
@@ -363,50 +376,65 @@ function scramble(seedTick) {
   return out;
 }
 const fmt = n => Math.max(0, Math.ceil(n)).toLocaleString('fr-FR');
+const _pc = new THREE.Color(), _pw = new THREE.Color(0xffffff), _pk = new THREE.Color(0x000000);
+const mixHex = (hex, other, t) => '#' + _pc.set(hex).lerp(other, t).getHexString();
+// dessine une plaque façon HUD (canvas 1024 x 256)
+function paintPlate(g, { cat, type, name, lvl, hp, maxHp }) {
+  const S = PLATE_STYLE, col = CAT_COLORS[cat];
+  const light = mixHex(col, _pw, S.textLight), dark = mixHex(col, _pk, S.bodyDark), empty = mixHex(col, _pk, S.emptyDark);
+  const poly = (pts, close = true) => { g.beginPath(); g.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) g.lineTo(pts[i], pts[i + 1]); if (close) g.closePath(); };
+  g.clearRect(0, 0, 1024, 256);
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  // corps : octogone du symbole + bande + pointe
+  const body = [40, 108, 72, 64, 176, 64, 204, 92, 968, 92, 1004, 138, 968, 184, 204, 184, 176, 212, 72, 212, 40, 168];
+  poly(body); g.fillStyle = dark; g.globalAlpha = 0.88; g.fill(); g.globalAlpha = 1;
+  g.shadowColor = col; g.shadowBlur = S.glow; g.strokeStyle = col; g.lineWidth = S.line;
+  poly(body); g.stroke();
+  // traits décoratifs
+  g.lineWidth = S.line * 0.7;
+  poly([18, 120, 18, 156], false); g.stroke();
+  poly([90, 48, 160, 48, 176, 40], false); g.stroke();
+  poly([232, 78, 640, 78], false); g.stroke();
+  poly([760, 78, 860, 78, 878, 60, 930, 60], false); g.stroke();
+  poly([290, 222, 330, 222, 350, 200, 900, 200], false); g.stroke();
+  poly([90, 228, 160, 228], false); g.stroke();
+  // symbole en pixels
+  const icon = PLATE_ICONS[type === 'npc' ? 'npc' : type === 'player' ? 'player' : cat === 'boss' ? 'boss' : cat === 'legendary' ? 'legendary' : 'monster'];
+  const px = 10, ox = 122 - 5.5 * px, oy = 138 - 5 * px;
+  g.fillStyle = col;
+  icon.forEach((row, j) => { for (let i = 0; i < row.length; i++) if (row[i] === '#') g.fillRect(ox + i * px, oy + j * px, px - 1, px - 1); });
+  // barre de vie en parallélogramme
+  const x0 = 236, x1 = 822, sl = 24, y0 = 106, y1 = 170, w = x1 - x0 - sl;
+  const r = Math.max(0, Math.min(1, hp / maxHp));
+  g.shadowBlur = 0;
+  poly([x0 + sl, y0, x1, y0, x1 - sl, y1, x0, y1]); g.fillStyle = empty; g.fill();
+  if (r > 0) { poly([x0 + sl, y0, x0 + sl + w * r, y0, x0 + w * r, y1, x0, y1]); g.fillStyle = col; g.fill(); }
+  g.shadowBlur = S.glow * 0.6; g.lineWidth = 2.5; poly([x0 + sl, y0, x1, y0, x1 - sl, y1, x0, y1]); g.stroke();
+  // textes
+  g.shadowBlur = 0; g.textBaseline = 'middle';
+  g.font = S.hpFont; g.textAlign = 'center';
+  g.lineWidth = 8; g.strokeStyle = dark; g.strokeText(fmt(hp) + ' / ' + fmt(maxHp), (x0 + x1) / 2, 140);
+  g.fillStyle = '#ffffff'; g.fillText(fmt(hp) + ' / ' + fmt(maxHp), (x0 + x1) / 2, 140);
+  if (lvl) { g.font = S.lvFont; g.fillStyle = light; g.textAlign = 'center'; g.fillText('LV ' + lvl, 900, 139); }
+  g.font = S.nameFont; g.textAlign = 'center'; g.fillStyle = light; g.shadowColor = col; g.shadowBlur = S.glow * 0.8;
+  let n = name; while (g.measureText(n).width > 500 && n.length > 3) n = n.slice(0, -2) + '…';
+  g.fillText(n, 470, 40);
+  g.shadowBlur = 0;
+}
 class Plate {
   constructor() {
-    this.canvas = document.createElement('canvas'); this.canvas.width = 512; this.canvas.height = 144;
+    this.canvas = document.createElement('canvas'); this.canvas.width = 1024; this.canvas.height = 256;
     this.tex = new THREE.CanvasTexture(this.canvas); this.tex.colorSpace = THREE.SRGBColorSpace;
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.169), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false, opacity: 0 }));
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.16), new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false, opacity: 0 }));
     this.mesh.renderOrder = 10; this.mesh.visible = false; scene.add(this.mesh);
     this.key = ''; this.alpha = 0;
   }
   draw(m) {
-    const S = PLATE_STYLE, cat = plateCategory(m), k = m.kind, hp = fmt(m.hp);
-    // niveau des légendaires : caractères qui défilent, illisible
-    const lvl = cat === 'legendary' ? scramble(Math.floor(time / S.scrambleSpeed)) : String(k.level);
-    const key = cat + '|' + hp + '|' + lvl;
+    const cat = plateCategory(m), k = m.kind;
+    const lvl = cat === 'legendary' ? scramble(Math.floor(time / PLATE_STYLE.scrambleSpeed)) : (k.level != null ? String(k.level) : '');
+    const key = cat + '|' + fmt(m.hp) + '|' + lvl;
     if (key === this.key) return; this.key = key;
-    const g = this.canvas.getContext('2d'), col = CAT_COLORS[cat], W = 512, H = 144;
-    g.clearRect(0, 0, W, H);
-    g.fillStyle = S.bg; g.strokeStyle = col; g.lineWidth = S.border;
-    g.beginPath(); g.roundRect(4, 4, W - 8, H - 8, S.radius); g.fill(); g.stroke();
-    let x = 26;
-    g.textBaseline = 'middle';
-    if (cat === 'boss' || cat === 'legendary') { g.fillStyle = col; g.font = S.nameFont; g.textAlign = 'left'; g.fillText(cat === 'boss' ? '☠' : '★', x, 42); x += 46; }
-    // badge : rôle pour un PNJ, sinon niveau
-    g.font = S.badgeFont;
-    let bw;
-    if (k.cat === 'npc') {
-      const role = k.role || 'PNJ'; bw = g.measureText(role).width + 8;
-      g.fillStyle = S.roleText; g.textAlign = 'right'; g.fillText(role, W - 26, 42);
-    } else {
-      const badge = 'Niv. ' + lvl; // boss et légendaires sont signalés par leur icône
-      bw = g.measureText(cat === 'legendary' ? badge.replace(lvl, 'WW') : badge).width + 24; // largeur stable pendant le défilement
-      g.fillStyle = col; g.beginPath(); g.roundRect(W - 22 - bw, 22, bw, 40, 8); g.fill();
-      g.fillStyle = S.badgeText; g.textAlign = 'center'; g.fillText(badge, W - 22 - bw / 2, 43);
-    }
-    // nom
-    g.textAlign = 'left'; g.fillStyle = col; g.font = S.nameFont;
-    let name = k.name; const maxW = W - 22 - bw - x - 16;
-    while (g.measureText(name).width > maxW && name.length > 3) name = name.slice(0, -2) + '…';
-    g.fillText(name, x, 42);
-    // barre de vie (tout le monde, PNJ compris)
-    g.fillStyle = S.hpBg; g.beginPath(); g.roundRect(22, 80, W - 44, 40, 8); g.fill();
-    const r = Math.max(0, Math.min(1, m.hp / m.maxHp));
-    if (r > 0) { g.fillStyle = S.hpFill; g.beginPath(); g.roundRect(22, 80, Math.max(16, (W - 44) * r), 40, 8); g.fill(); }
-    g.fillStyle = S.hpText; g.font = S.hpFont; g.textAlign = 'center';
-    g.fillText(hp + ' / ' + fmt(m.maxHp), W / 2, 101);
+    paintPlate(this.canvas.getContext('2d'), { cat, type: k.cat, name: k.name, lvl, hp: m.hp, maxHp: m.maxHp });
     this.tex.needsUpdate = true;
   }
   update(dt, m, show, topY) {
@@ -864,7 +892,7 @@ renderer.setAnimationLoop(() => {
   updateNumbers(dt);
   renderer.render(scene, camera);
 });
-window.__game = { rig, monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
+window.__game = { paintPlate, CAT_COLORS, rig, monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
 </script>
 </body>
 </html>
