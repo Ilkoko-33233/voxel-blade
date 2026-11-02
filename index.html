@@ -198,6 +198,13 @@ function playHit(intensity) {
   if (!actx) return; const now = actx.currentTime; if (now - lastHitSnd < 0.04) return; lastHitSnd = now;
   burst(700 + intensity * 1800, 1.2, Math.min(0.55, 0.15 + intensity * 0.2), 0.09);
 }
+function playTink() {
+  if (!actx) return; const now = actx.currentTime; if (now - lastHitSnd < 0.03) return; lastHitSnd = now;
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = 'triangle';
+  o.frequency.setValueAtTime(1800 + Math.random() * 400, now); o.frequency.exponentialRampToValueAtTime(900, now + 0.08);
+  g.gain.setValueAtTime(0.18, now); g.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+  o.connect(g).connect(actx.destination); o.start(now); o.stop(now + 0.13);
+}
 function playThud(intensity) {
   if (!actx) return;
   burst(160 + intensity * 120, 0.8, 0.25 + intensity * 0.35, 0.16, 'lowpass');
@@ -309,6 +316,10 @@ const tint = (hex, amt) => _c.setHex(hex).offsetHSL(0, 0, amt).getHex();
 
 const SLIME = {
   core: { x: [-1, 1], j: [4, 6], z: [-1, 1] },  // au centre
+  // carapace : couche intérieure autour du noyau (fissure au 1er coup, casse au 2e, ne repousse jamais)
+  shell: { thickness: 1, color: 0x237a3a, cracked: 0xb9d98a, dmg: 0.5 },
+  // régénération de la couche extérieure
+  regen: { delay: 2, interval: 0.1 },
   name: 'Slime', level: 1, cat: 'monster', behavior: 'approach', hp: 500, hop: true,
   build: () => buildModel(15, 12, 15,
     (x, j, z) => { const y = j + 0.5 - 4.5, ry = y < 0 ? 4.5 : 7.5, r = 7.2; return (x * x + z * z) / (r * r) + (y * y) / (ry * ry) <= 1; },
@@ -476,6 +487,7 @@ class Plate {
   }
 }
 
+const NB6 = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 /* ================= Monstres ================= */
 const _m = new THREE.Matrix4(), _v = new V3(), _w = new V3();
 const dirOf = a => new V3(Math.sin(a), 0, -Math.cos(a));
@@ -495,6 +507,20 @@ class Monster {
     }
     this.coreMat = new THREE.MeshBasicMaterial({ color: CORE_COLOR });
     this.coreMesh = new THREE.InstancedMesh(boxGeo, this.coreMat, Math.max(1, nc)); this.coreMesh.frustumCulled = false; this.coreMesh.count = nc;
+    // carapace : voxels à « thickness » du noyau
+    this.shell = new Uint8Array(n); const sh = kind.shell;
+    if (sh && cb) for (let i = 0; i < n; i++) {
+      if (this.coreIdx[i] >= 0) continue;
+      const x = m.vi[i] - m.cx, j = m.vj[i], z = m.vk[i] - m.cz, t = sh.thickness;
+      if (x >= cb.x[0] - t && x <= cb.x[1] + t && j >= cb.j[0] - t && j <= cb.j[1] + t && z >= cb.z[0] - t && z <= cb.z[1] + t) { this.shell[i] = 1; m.col[i] = sh.color; }
+    }
+    this.baseCol = m.col.slice();
+    this.crackSwing = new Int32Array(n); this.noRegrow = new Uint8Array(n); this.dmgTaken = new Float32Array(n);
+    // distance au centre (pour repousser de l'intérieur vers l'extérieur)
+    this.cy = cb ? (cb.j[0] + cb.j[1]) / 2 : m.ny / 2; this.cxz = cb ? [(cb.x[0] + cb.x[1]) / 2, (cb.z[0] + cb.z[1]) / 2] : [0, 0];
+    this.d2 = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = m.vi[i] - m.cx - this.cxz[0], y = m.vj[i] - this.cy, z = m.vk[i] - m.cz - this.cxz[1]; this.d2[i] = x * x + y * y + z * z; }
+    this.regenTimer = 0;
     for (let i = 0; i < n; i++) this.mesh.setColorAt(i, _c.setHex(this.model.col[i]));
     this.group = new THREE.Group(); this.group.add(this.mesh, this.coreMesh); scene.add(this.group);
     this.alive = new Uint8Array(n); this.vel = new V3(); this.lastThud = 0; this.stun = 0; this.jy = 0; this.jv = 0; this.num = null; this.yaw = 0; this.phase = rnd() * 6;
@@ -516,6 +542,8 @@ class Monster {
   voxelWorld(i, out) { const p = this.model.pos; return out.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]).applyMatrix4(this.group.matrixWorld); }
   spawn() {
     const n = this.model.count; this.alive.fill(1); for (let i = 0; i < n; i++) this.setVoxel(i, true);
+    if (this.kind.shell) { for (let i = 0; i < n; i++) if (this.crackSwing[i]) this.mesh.setColorAt(i, _c.setHex(this.baseCol[i])); this.mesh.instanceColor.needsUpdate = true; }
+    this.crackSwing.fill(0); this.noRegrow.fill(0); this.dmgTaken.fill(0);
     this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
     if (this.kind.behavior === 'passive') { this.pickWaypoint(); this.group.position.copy(this.wp); this.pickWaypoint(); }
     else if (this.kind.behavior === 'idle') this.group.position.set(this.kind.home[0], 0, this.kind.home[1]);
@@ -549,16 +577,73 @@ class Monster {
     this.num.add(dmg, crit);
     this.lastHit = time;
   }
+  // un voxel du noyau ne peut être touché que si la carapace est percée à côté de lui
+  exposed(id) {
+    const m = this.model, i = m.vi[id], j = m.vj[id], k = m.vk[id];
+    for (const [a, b, c] of NB6) {
+      const x = i + a, y = j + b, z = k + c;
+      if (x < 0 || y < 0 || z < 0 || x >= m.nx || y >= m.ny || z >= m.nz) return true;
+      const o = m.grid[x + m.nx * (y + m.ny * z)];
+      if (o < 0 || !this.alive[o]) return true;
+    }
+    return false;
+  }
   cutVoxel(id, speed, point, vel) {
+    const sh = this.kind.shell;
+    if (sh && this.coreIdx[id] >= 0 && !this.exposed(id)) return false; // la carapace protège encore
+    if (sh && this.shell[id]) {
+      if (this.crackSwing[id] === swingId) return false;                 // déjà fissuré pendant ce coup
+      if (!this.crackSwing[id]) {                                         // 1er coup : fissure
+        this.crackSwing[id] = swingId; this.mesh.setColorAt(id, _c.setHex(sh.cracked)); this.mesh.instanceColor.needsUpdate = true;
+        this.addDamage(DMG_PER_VOXEL * sh.dmg * speedMult(speed), false, point);
+        this.voxelWorld(id, _w); spawnParticle(_w.x, _w.y, _w.z, (rnd() - 0.5), rnd() + 0.5, (rnd() - 0.5), sh.cracked, V * 0.3, 0.4);
+        playTink(); this.onAttacked(); return true;
+      }
+      this.markTunnel(id);                                                // 2e coup : casse, et le trou restera ouvert
+    }
     this.alive[id] = 0; this.aliveCount--; this.setVoxel(id, false);
     const crit = !!this.model.weak[id];
     if (this.coreIdx[id] >= 0) this.breakCore(point);
-    else this.addDamage(DMG_PER_VOXEL * speedMult(speed) * (crit ? WEAK_MULT : 1), crit, point);
+    else { const dmg = DMG_PER_VOXEL * speedMult(speed) * (crit ? WEAK_MULT : 1) * (sh && this.shell[id] ? sh.dmg : 1); this.dmgTaken[id] = dmg; this.addDamage(dmg, crit, point); }
     this.voxelWorld(id, _w);
     const c = this.model.col[id];
     for (let n = 0; n < 2; n++)
       spawnParticle(_w.x, _w.y, _w.z, vel.x * 0.25 + (rnd() - 0.5) * 1.4, vel.y * 0.25 + rnd() * 1.6 + 0.4, vel.z * 0.25 + (rnd() - 0.5) * 1.4, c, V * (0.45 + rnd() * 0.3), 0.6 + rnd() * 0.6);
     this.mat.emissiveIntensity = 0.55; this.pendingDetach = true; this.onAttacked();
+    return true;
+  }
+  // empêche la repousse dans un tunnel allant de ce voxel de carapace vers l'extérieur
+  markTunnel(id) {
+    const m = this.model;
+    let x = m.vi[id] - m.cx - this.cxz[0], y = m.vj[id] - this.cy, z = m.vk[id] - m.cz - this.cxz[1];
+    const l = Math.hypot(x, y, z) || 1; const dx = x / l, dy = y / l, dz = z / l;
+    for (let s = 0; s <= 14; s += 0.5) {
+      const px = m.vi[id] + dx * s, py = m.vj[id] + dy * s, pz = m.vk[id] + dz * s;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+        const i = Math.round(px) + a, j = Math.round(py) + b, k = Math.round(pz) + c;
+        if (i < 0 || j < 0 || k < 0 || i >= m.nx || j >= m.ny || k >= m.nz) continue;
+        if ((i - px) ** 2 + (j - py) ** 2 + (k - pz) ** 2 > 1.3) continue;
+        const o = m.grid[i + m.nx * (j + m.ny * k)];
+        if (o >= 0 && !this.shell[o] && this.coreIdx[o] < 0) this.noRegrow[o] = 1;
+      }
+    }
+  }
+  // repousse d'un voxel extérieur, au plus près du centre, contre un voxel vivant
+  regrowOne() {
+    const m = this.model; let best = -1, bd = 1e9;
+    for (let i = 0; i < m.count; i++) {
+      if (this.alive[i] || this.shell[i] || this.coreIdx[i] >= 0 || this.noRegrow[i] || this.d2[i] >= bd) continue;
+      const a = m.vi[i], b = m.vj[i], c = m.vk[i]; let touch = false;
+      for (const [p, q, r] of NB6) {
+        const x = a + p, y = b + q, z = c + r;
+        if (x < 0 || y < 0 || z < 0 || x >= m.nx || y >= m.ny || z >= m.nz) continue;
+        const o = m.grid[x + m.nx * (y + m.ny * z)]; if (o >= 0 && this.alive[o]) { touch = true; break; }
+      }
+      if (touch) { best = i; bd = this.d2[i]; }
+    }
+    if (best < 0) return;
+    this.alive[best] = 1; this.aliveCount++; this.setVoxel(best, true);
+    this.hp = Math.min(this.maxHp, this.hp + (this.dmgTaken[best] || DMG_PER_VOXEL)); this.dmgTaken[best] = 0;
   }
   // noyau tranché : mort immédiate
   breakCore(point) {
@@ -671,6 +756,11 @@ class Monster {
         g.position.y = this.jy; g.rotation.z = Math.sin(this.phase) * (moving ? 0.1 : 0.03);
       }
     }
+    const rg = this.kind.regen;
+    if (rg && this.state === 'alive' && time - this.lastHit > rg.delay && this.hp > 0) {
+      this.regenTimer += dt;
+      while (this.regenTimer >= rg.interval) { this.regenTimer -= rg.interval; this.regrowOne(); }
+    } else this.regenTimer = 0;
     this.mat.emissiveIntensity *= Math.exp(-dt * 14);
     this.coreMat.color.setHex(CORE_COLOR).multiplyScalar(0.75 + 0.25 * Math.sin(time * 6 + this.phase));
     g.updateMatrixWorld();
@@ -700,6 +790,7 @@ const sword = new THREE.Group();
     e.position.set(sx * 0.0295, 0, blade.position.z); sword.add(e);
   }
 }
+let swingId = 1;
 const swordState = { holder: null, hasPrev: false, prevB: new V3(), prevT: new V3(), tipSpeed: 0, edge: 0 };
 function giveSword(holder) {
   if (swordState.holder?.userData.fist) swordState.holder.userData.fist.visible = true;
@@ -790,7 +881,7 @@ function sweep(b0, t0, b1, t1) {
         if (id < 0) continue;
         _sv.lerpVectors(baseVel, tipVel, g);
         const c = sampleCut(_sv);
-        if (c.cut) { m.cutVoxel(id, c.speed, _p, _sv); cutVel.add(_sv); hits++; intensity = Math.max(intensity, speedMult(c.speed)); }
+        if (c.cut) { if (!m.cutVoxel(id, c.speed, _p, _sv)) continue; cutVel.add(_sv); hits++; intensity = Math.max(intensity, speedMult(c.speed)); }
         else { pushVel.add(_sv); pushPt.add(_p); pushN++; }
       }
     }
@@ -827,6 +918,7 @@ function updateSword(dt) {
       tipVel.subVectors(_T, swordState.prevT).divideScalar(dt); baseVel.subVectors(_B, swordState.prevB).divideScalar(dt);
       sword.matrixWorld.extractBasis(xAx, yAx, zAx); xAx.normalize(); zAx.normalize();
       const c = sampleCut(tipVel);
+      const cutting = c.speed >= MIN_CUT_SPEED; if (cutting && !swordState.cutting) swingId++; swordState.cutting = cutting; // un « passage » = un coup
       swordState.tipSpeed += (c.speed - swordState.tipSpeed) * 0.5;
       swordState.edge += (c.edge - swordState.edge) * 0.5;
       sweep(swordState.prevB, swordState.prevT, _B, _T);
@@ -949,7 +1041,7 @@ renderer.setAnimationLoop(() => {
   updateNumbers(dt);
   renderer.render(scene, camera);
 });
-window.__game = { camera, paintPlate, CAT_COLORS, rig, monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
+window.__game = { bumpSwing: () => ++swingId, camera, paintPlate, CAT_COLORS, rig, monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
 </script>
 </body>
 </html>
