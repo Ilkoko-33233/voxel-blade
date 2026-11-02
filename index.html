@@ -42,6 +42,7 @@ const MIN_CUT_SPEED = 1.0;    // vitesse mini d'un point de lame pour couper (m/
 const EDGE_MIN = 0.6;         // alignement mini mouvement/tranchant pour couper (1 = parfaitement de taille)
 const DMG_PER_VOXEL = 1;      // dégâts de base par voxel traversé
 const WEAK_MULT = 3;          // multiplicateur sur les points faibles (yeux)
+const CORE_COLOR = 0xff3ad0;   // couleur lumineuse des noyaux
 const PLAYER_LEVEL = 5;       // niveau fixe du joueur pour le test
 const PLATE_SHOW_TIME = 10;   // secondes d'affichage de la plaque après le dernier échange de coups
 const MOVE_SPEED = 2.0;       // déplacement au joystick (m/s)
@@ -162,7 +163,7 @@ function drawSign() {
   g.font = 'bold 76px system-ui, sans-serif'; g.fillText('VOXEL BLADE', 512, 110);
   g.font = '34px system-ui, sans-serif'; g.globalAlpha = .8; g.fillText('prototype — test de découpe', 512, 160); g.globalAlpha = 1;
   g.font = '38px system-ui, sans-serif'; g.textAlign = 'left';
-  ['• Seul le tranchant coupe : chaque voxel = dégâts', '• Plus le coup est rapide, plus ça fait mal', '• Plat de la lame ou coup lent : ça repousse', '• Les yeux sont des points faibles (×3)', '• Gâchette : changer l\'épée de main', '• Joystick gauche : marcher · droit : tourner']
+  ['• Seul le tranchant coupe : chaque voxel = dégâts', '• Plus le coup est rapide, plus ça fait mal', '• Plat de la lame ou coup lent : ça repousse', '• Yeux ×3 · Noyau tranché = mort immédiate', '• Gâchette : changer l\'épée de main', '• Joystick gauche : marcher · droit : tourner']
     .forEach((t, i) => g.fillText(t, 60, 222 + i * 52));
   g.textAlign = 'center'; g.font = 'bold 46px system-ui, sans-serif'; g.fillStyle = '#ffd23a';
   g.fillText('Monstres vaincus : ' + kills, 512, 545);
@@ -252,7 +253,7 @@ function updateParticles(dt) {
 const numbers = [];
 class DmgNumber {
   constructor(pos) {
-    this.canvas = document.createElement('canvas'); this.canvas.width = 256; this.canvas.height = 128;
+    this.canvas = document.createElement('canvas'); this.canvas.width = 384; this.canvas.height = 128;
     this.tex = new THREE.CanvasTexture(this.canvas); this.tex.colorSpace = THREE.SRGBColorSpace;
     this.sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex, depthTest: false, transparent: true }));
     this.sprite.renderOrder = 999; this.sprite.position.copy(pos); scene.add(this.sprite);
@@ -261,16 +262,16 @@ class DmgNumber {
   }
   add(v, crit) { this.value += v; this.crit = this.crit || crit; this.dirty = true; }
   draw() {
-    const g = this.canvas.getContext('2d'); g.clearRect(0, 0, 256, 128);
-    const txt = this.ko ? 'K.O. ' + Math.round(this.value) : String(Math.max(1, Math.round(this.value)));
-    g.font = `bold ${this.ko ? 64 : 88}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.lineWidth = 12; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(txt, 128, 66);
-    g.fillStyle = this.ko ? '#ff6b4a' : this.crit ? '#ffd23a' : '#ffffff'; g.fillText(txt, 128, 66);
+    const g = this.canvas.getContext('2d'); g.clearRect(0, 0, 384, 128);
+    const txt = this.ko === 'core' ? 'NOYAU ' + Math.round(this.value) : this.ko ? 'K.O. ' + Math.round(this.value) : String(Math.max(1, Math.round(this.value)));
+    g.font = `bold ${this.ko ? (this.ko === 'core' ? 54 : 64) : 88}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineWidth = 12; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(txt, 192, 66);
+    g.fillStyle = this.ko === 'core' ? '#ff6fe0' : this.ko ? '#ff6b4a' : this.crit ? '#ffd23a' : '#ffffff'; g.fillText(txt, 192, 66);
     this.tex.needsUpdate = true;
     const k = 0.34 + Math.min(0.36, this.value / 700);
-    this.sprite.scale.set(k, k / 2, 1);
+    this.sprite.scale.set(k * 1.5, k / 2, 1);
   }
-  release(ko = false) { if (ko) this.ko = true; this.floating = true; this.t = 0; this.dirty = true; }
+  release(ko = false) { if (ko) this.ko = ko; this.floating = true; this.t = 0; this.dirty = true; }
   update(dt) {
     if (this.dirty) { this.draw(); this.dirty = false; }
     if (!this.floating) return true;
@@ -307,6 +308,7 @@ function buildModel(nx, ny, nz, shape, paint) {
 const tint = (hex, amt) => _c.setHex(hex).offsetHSL(0, 0, amt).getHex();
 
 const SLIME = {
+  core: { x: [-1, 1], j: [4, 6], z: [-1, 1] },  // au centre
   name: 'Slime', level: 1, cat: 'monster', behavior: 'approach', hp: 500, hop: true,
   build: () => buildModel(15, 12, 15,
     (x, j, z) => { const y = j + 0.5 - 4.5, ry = y < 0 ? 4.5 : 7.5, r = 7.2; return (x * x + z * z) / (r * r) + (y * y) / (ry * ry) <= 1; },
@@ -321,6 +323,7 @@ const SLIME = {
     })
 };
 const MUSHROOM = {
+  core: { x: [-1, 1], j: [3, 4], z: [-1, 1] },  // centre du pied, à hauteur des yeux
   name: 'Champi', level: 5, cat: 'monster', behavior: 'approach', hp: 400, hop: false,
   build: () => buildModel(15, 13, 15,
     (x, j, z) => {
@@ -343,6 +346,7 @@ const MUSHROOM = {
 };
 
 const RABBIT = {
+  core: { x: [-1, 1], j: [5, 6], z: [1.5, 2.5] }, // dans la tête
   name: 'Lapin des prés', level: 2, cat: 'passive', behavior: 'passive', hp: 60, hop: true,
   build: () => buildModel(9, 11, 12,
     (x, j, z) => {
@@ -363,6 +367,7 @@ const RABBIT = {
 };
 
 const VILLAGER = {
+  core: { x: [-1, 1], j: [15, 17], z: [-1, 0] },  // dans la tête
   name: 'Elric', role: 'Marchand', level: 8, cat: 'npc', behavior: 'idle', hp: 800, hop: false, home: [2.3, -2.4],
   build: () => buildModel(9, 20, 5,
     (x, j, z) => {
@@ -482,18 +487,31 @@ class Monster {
     const n = this.model.count;
     this.mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0 });
     this.mesh = new THREE.InstancedMesh(boxGeo, this.mat, n); this.mesh.frustumCulled = false;
+    // noyau : voxels marqués, rendus à part avec une matière lumineuse
+    const m = this.model, cb = kind.core; this.coreIdx = new Int32Array(n).fill(-1); let nc = 0;
+    if (cb) for (let i = 0; i < n; i++) {
+      const x = m.vi[i] - m.cx, j = m.vj[i], z = m.vk[i] - m.cz;
+      if (x >= cb.x[0] && x <= cb.x[1] && j >= cb.j[0] && j <= cb.j[1] && z >= cb.z[0] && z <= cb.z[1]) { this.coreIdx[i] = nc++; m.col[i] = CORE_COLOR; }
+    }
+    this.coreMat = new THREE.MeshBasicMaterial({ color: CORE_COLOR });
+    this.coreMesh = new THREE.InstancedMesh(boxGeo, this.coreMat, Math.max(1, nc)); this.coreMesh.frustumCulled = false; this.coreMesh.count = nc;
     for (let i = 0; i < n; i++) this.mesh.setColorAt(i, _c.setHex(this.model.col[i]));
-    this.group = new THREE.Group(); this.group.add(this.mesh); scene.add(this.group);
+    this.group = new THREE.Group(); this.group.add(this.mesh, this.coreMesh); scene.add(this.group);
     this.alive = new Uint8Array(n); this.vel = new V3(); this.lastThud = 0; this.stun = 0; this.jy = 0; this.jv = 0; this.num = null; this.yaw = 0; this.phase = rnd() * 6;
     this.plate = new Plate(); this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0; this.wp = new V3();
     this.state = 'dead'; this.timer = 0.3 + (slot || 0.6) * 0.2;
     this.group.visible = false;
   }
   setVoxel(i, show) {
-    const a = this.mesh.instanceMatrix.array, o = i * 16, p = this.model.pos, s = show ? V * 0.97 : 0;
+    const ci = this.coreIdx[i], mesh = ci >= 0 ? this.coreMesh : this.mesh, slot = ci >= 0 ? ci : i;
+    if (ci >= 0) this.writeVoxel(this.mesh, i, i, false); // la place dans le maillage normal reste vide
+    this.writeVoxel(mesh, slot, i, show);
+  }
+  writeVoxel(mesh, slot, i, show) {
+    const a = mesh.instanceMatrix.array, o = slot * 16, p = this.model.pos, s = show ? V * 0.97 : 0;
     a.fill(0, o, o + 16); a[o] = s; a[o + 5] = s; a[o + 10] = s;
     a[o + 12] = p[i * 3]; a[o + 13] = p[i * 3 + 1]; a[o + 14] = p[i * 3 + 2]; a[o + 15] = 1;
-    this.mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceMatrix.needsUpdate = true;
   }
   voxelWorld(i, out) { const p = this.model.pos; return out.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]).applyMatrix4(this.group.matrixWorld); }
   spawn() {
@@ -504,7 +522,7 @@ class Monster {
     else { const d = dirOf(this.slot - rig.rotation.y); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5); }
     this.group.scale.setScalar(0.001); this.group.visible = true;
     this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0;
-    this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.vel.set(0, 0, 0); this.stun = 0; this.jy = 0; this.jv = 0;
+    this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.coreBroken = false; this.vel.set(0, 0, 0); this.stun = 0; this.jy = 0; this.jv = 0;
   }
   pickWaypoint() { // point au hasard dans la clairière, plutôt devant le joueur
     const a = (rnd() - 0.5) * 2.6, r = 2.6 + rnd() * 3.2;
@@ -534,12 +552,20 @@ class Monster {
   cutVoxel(id, speed, point, vel) {
     this.alive[id] = 0; this.aliveCount--; this.setVoxel(id, false);
     const crit = !!this.model.weak[id];
-    this.addDamage(DMG_PER_VOXEL * speedMult(speed) * (crit ? WEAK_MULT : 1), crit, point);
+    if (this.coreIdx[id] >= 0) this.breakCore(point);
+    else this.addDamage(DMG_PER_VOXEL * speedMult(speed) * (crit ? WEAK_MULT : 1), crit, point);
     this.voxelWorld(id, _w);
     const c = this.model.col[id];
     for (let n = 0; n < 2; n++)
       spawnParticle(_w.x, _w.y, _w.z, vel.x * 0.25 + (rnd() - 0.5) * 1.4, vel.y * 0.25 + rnd() * 1.6 + 0.4, vel.z * 0.25 + (rnd() - 0.5) * 1.4, c, V * (0.45 + rnd() * 0.3), 0.6 + rnd() * 0.6);
     this.mat.emissiveIntensity = 0.55; this.pendingDetach = true; this.onAttacked();
+  }
+  // noyau tranché : mort immédiate
+  breakCore(point) {
+    if (this.coreBroken) return;
+    this.coreBroken = true;
+    this.addDamage(Math.max(0, this.hp), true, point);
+    this.hp = 0;
   }
   // recul : impulsion horizontale (m/s), petit saut et étourdissement
   impulse(ix, iz, maxSpeed, hop) {
@@ -565,10 +591,12 @@ class Monster {
     let det = 0;
     for (let i = 0; i < n; i++) if (alive[i] && !seen[i]) {
       alive[i] = 0; this.aliveCount--; this.setVoxel(i, false); det++;
+      if (this.coreIdx[i] >= 0) this.coreBroken = true;
       this.voxelWorld(i, _w);
       spawnParticle(_w.x, _w.y, _w.z, (rnd() - 0.5) * 0.8, rnd() * 0.6, (rnd() - 0.5) * 0.8, m.col[i], V * 0.85, 0.8 + rnd() * 0.7);
     }
-    if (det) {
+    if (det && this.coreBroken) { this.voxelWorld(0, _w); _w.y = this.group.position.y + m.height * 0.6; this.addDamage(Math.max(0, this.hp), true, _w); this.hp = 0; playHit(2); }
+    else if (det) {
       this.voxelWorld(0, _w); _w.y = this.group.position.y + m.height * 0.8;
       this.addDamage(det * DMG_PER_VOXEL, false, _w); playHit(1.5);
     }
@@ -587,7 +615,7 @@ class Monster {
       this.alive[i] = 0;
     }
     this.group.visible = false; this.engagedUntil = -1;
-    if (this.num) { this.num.release(true); this.num = null; }
+    if (this.num) { this.num.release(this.coreBroken ? 'core' : true); this.num = null; }
     playDeath(); haptic(1, 120);
   }
   update(dt) {
@@ -644,6 +672,7 @@ class Monster {
       }
     }
     this.mat.emissiveIntensity *= Math.exp(-dt * 14);
+    this.coreMat.color.setHex(CORE_COLOR).multiplyScalar(0.75 + 0.25 * Math.sin(time * 6 + this.phase));
     g.updateMatrixWorld();
     if (this.pendingDetach && time - this.lastHit > 0.12) { this.pendingDetach = false; this.checkDetached(); }
     if (this.num && time - this.lastHit > 0.35) { this.num.release(); this.num = null; }
