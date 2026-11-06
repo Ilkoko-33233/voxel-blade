@@ -43,7 +43,11 @@ const EDGE_MIN = 0.6;         // alignement mini mouvement/tranchant pour couper
 const DMG_PER_VOXEL = 1;      // dégâts de base par voxel traversé
 const WEAK_MULT = 3;          // multiplicateur sur les points faibles (yeux)
 const CORE_COLOR = 0xff3ad0;   // couleur lumineuse des noyaux
-const PLAYER_LEVEL = 5;       // niveau fixe du joueur pour le test
+const DEATH_XP_LOSS = 0.1;    // part de l'XP du niveau en cours perdue à la mort (0 = aucune perte)
+const LEASH = 6.5;            // les monstres ne poursuivent pas le joueur au-delà de ce rayon autour de la clairière
+const RESPAWN = [0, 7.2];     // point de réapparition, au village
+const xpNeeded = l => Math.round(40 * Math.pow(l, 1.4));   // XP pour passer du niveau l au suivant
+const maxHpFor = l => 100 + 15 * (l - 1);                  // PV max du joueur selon son niveau
 const PLATE_SHOW_TIME = 10;   // secondes d'affichage de la plaque après le dernier échange de coups
 const MOVE_SPEED = 2.0;       // déplacement au joystick (m/s)
 const SNAP_ANGLE = Math.PI / 6; // rotation par cran (30°)
@@ -67,7 +71,7 @@ const PLATE_ICONS = {
   npc: ['.#########.', '###########', '###########', '##.##.##.##', '###########', '###########', '.#########.', '..##.......', '..#........', '...........'],
   player: ['###########', '###########', '#####.#####', '####...####', '#####.#####', '.#########.', '.#########.', '..#######..', '...#####...', '.....#.....'],
 };
-const CAT_COLORS = { npc: '#D3CBB8', passive: '#8BCF5A', lower: '#F2D45C', equal: '#F09A3E', higher: '#E5484D', boss: '#A27BF0', legendary: '#4FA3F7' };
+const CAT_COLORS = { player: '#D3CBB8', npc: '#D3CBB8', passive: '#8BCF5A', lower: '#F2D45C', equal: '#F09A3E', higher: '#E5484D', boss: '#A27BF0', legendary: '#4FA3F7' };
 const speedMult = s => THREE.MathUtils.clamp(s / 2.5, 0.4, 3);
 
 /* ================= Utilitaires ================= */
@@ -162,8 +166,8 @@ function drawSign() {
   g.fillStyle = '#fff6e0'; g.textAlign = 'center';
   g.font = 'bold 76px system-ui, sans-serif'; g.fillText('VOXEL BLADE', 512, 110);
   g.font = '34px system-ui, sans-serif'; g.globalAlpha = .8; g.fillText('prototype — test de découpe', 512, 160); g.globalAlpha = 1;
-  g.font = '38px system-ui, sans-serif'; g.textAlign = 'left';
-  ['• Seul le tranchant coupe : chaque voxel = dégâts', '• Plus le coup est rapide, plus ça fait mal', '• Plat de la lame ou coup lent : ça repousse', '• Yeux ×3 · Noyau tranché = mort immédiate', '• Gâchette : changer l\'épée de main', '• Joystick gauche : marcher · droit : tourner']
+  g.font = '35px system-ui, sans-serif'; g.textAlign = 'left';
+  ['• Seul le tranchant coupe · vite = plus de dégâts', '• Plat ou coup lent : repousse · toute l\'épée pare', '• Yeux ×3 · noyau tranché = mort immédiate', '• Les monstres annoncent leurs attaques : pare !', '• Joystick G : marcher · D : tourner · Gâchette : épée', '• Ta vie et ton niveau : sur ton poignet gauche']
     .forEach((t, i) => g.fillText(t, 60, 222 + i * 52));
   g.textAlign = 'center'; g.font = 'bold 46px system-ui, sans-serif'; g.fillStyle = '#ffd23a';
   g.fillText('Monstres vaincus : ' + kills, 512, 545);
@@ -198,6 +202,18 @@ function playHit(intensity) {
   if (!actx) return; const now = actx.currentTime; if (now - lastHitSnd < 0.04) return; lastHitSnd = now;
   burst(700 + intensity * 1800, 1.2, Math.min(0.55, 0.15 + intensity * 0.2), 0.09);
 }
+function tone(type, f0, f1, vol, dur, delay = 0) {
+  if (!actx) return; const now = actx.currentTime + delay;
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = type;
+  o.frequency.setValueAtTime(f0, now); o.frequency.exponentialRampToValueAtTime(f1, now + dur);
+  g.gain.setValueAtTime(vol, now); g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  o.connect(g).connect(actx.destination); o.start(now); o.stop(now + dur + 0.02);
+}
+const playWarn = () => tone('sawtooth', 180, 420, 0.06, 0.35);
+const playClang = () => { tone('square', 1200, 600, 0.12, 0.18); tone('triangle', 2600, 1800, 0.08, 0.25); if (actx) burst(3000, 2, 0.25, 0.08); };
+const playSpit = () => { if (actx) burst(900, 1, 0.25, 0.12); };
+const playHurt = () => { if (actx) burst(220, 0.7, 0.6, 0.25, 'lowpass'); tone('sine', 160, 70, 0.25, 0.25); };
+const playLevelUp = () => [523, 659, 784, 1047].forEach((f, i) => tone('triangle', f, f * 1.01, 0.15, 0.25, i * 0.09));
 function playTink() {
   if (!actx) return; const now = actx.currentTime; if (now - lastHitSnd < 0.03) return; lastHitSnd = now;
   const o = actx.createOscillator(), g = actx.createGain(); o.type = 'triangle';
@@ -270,10 +286,10 @@ class DmgNumber {
   add(v, crit) { this.value += v; this.crit = this.crit || crit; this.dirty = true; }
   draw() {
     const g = this.canvas.getContext('2d'); g.clearRect(0, 0, 384, 128);
-    const txt = this.ko === 'core' ? 'NOYAU ' + Math.round(this.value) : this.ko ? 'K.O. ' + Math.round(this.value) : String(Math.max(1, Math.round(this.value)));
-    g.font = `bold ${this.ko ? (this.ko === 'core' ? 54 : 64) : 88}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    const txt = this.label ? this.label : this.ko === 'core' ? 'NOYAU ' + Math.round(this.value) : this.ko ? 'K.O. ' + Math.round(this.value) : String(Math.max(1, Math.round(this.value)));
+    g.font = `bold ${this.label ? 58 : this.ko ? (this.ko === 'core' ? 54 : 64) : 88}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.lineWidth = 12; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(txt, 192, 66);
-    g.fillStyle = this.ko === 'core' ? '#ff6fe0' : this.ko ? '#ff6b4a' : this.crit ? '#ffd23a' : '#ffffff'; g.fillText(txt, 192, 66);
+    g.fillStyle = this.label ? this.labelColor : this.ko === 'core' ? '#ff6fe0' : this.ko ? '#ff6b4a' : this.crit ? '#ffd23a' : '#ffffff'; g.fillText(txt, 192, 66);
     this.tex.needsUpdate = true;
     const k = 0.34 + Math.min(0.36, this.value / 700);
     this.sprite.scale.set(k * 1.5, k / 2, 1);
@@ -320,6 +336,7 @@ const SLIME = {
   shell: { thickness: 1, color: 0x237a3a, cracked: 0xb9d98a, dmg: 0.5 },
   // régénération de la couche extérieure
   regen: { delay: 2, interval: 0.1 },
+  attack: { type: 'leap', range: 1.9, wind: 0.7, dur: 0.45, dmg: 12, cooldown: [2.5, 4.5] }, // se tasse puis bondit
   name: 'Slime', level: 1, cat: 'monster', behavior: 'approach', hp: 500, hop: true,
   build: () => buildModel(15, 12, 15,
     (x, j, z) => { const y = j + 0.5 - 4.5, ry = y < 0 ? 4.5 : 7.5, r = 7.2; return (x * x + z * z) / (r * r) + (y * y) / (ry * ry) <= 1; },
@@ -335,6 +352,7 @@ const SLIME = {
 };
 const MUSHROOM = {
   core: { x: [-1, 1], j: [3, 4], z: [-1, 1] },  // centre du pied, à hauteur des yeux
+  attack: { type: 'spit', range: 3.5, wind: 0.8, speed: 3.2, dmg: 8, cooldown: [3.5, 5.5] }, // crache une spore
   name: 'Champi', level: 5, cat: 'monster', behavior: 'approach', hp: 400, hop: false,
   build: () => buildModel(15, 13, 15,
     (x, j, z) => {
@@ -407,7 +425,7 @@ function plateCategory(m) {
   const k = m.kind;
   if (k.cat === 'npc' || k.cat === 'boss' || k.cat === 'legendary') return k.cat;
   if (k.cat === 'passive' && !m.defending) return 'passive';
-  const d = k.level - PLAYER_LEVEL;
+  const d = k.level - player.level;
   return d <= -3 ? 'lower' : d >= 3 ? 'higher' : 'equal';
 }
 function scramble(seedTick) {
@@ -419,7 +437,7 @@ const fmt = n => Math.max(0, Math.ceil(n)).toLocaleString('fr-FR');
 const _pc = new THREE.Color(), _pw = new THREE.Color(0xffffff), _pk = new THREE.Color(0x000000);
 const mixHex = (hex, other, t) => '#' + _pc.set(hex).lerp(other, t).getHexString();
 // dessine une plaque façon HUD (canvas 1024 x 256)
-function paintPlate(g, { cat, type, name, lvl, hp, maxHp }) {
+function paintPlate(g, { cat, type, name, lvl, hp, maxHp, xp }) {
   const S = PLATE_STYLE, col = CAT_COLORS[cat];
   const light = mixHex(col, _pw, S.textLight), dark = mixHex(col, _pk, S.bodyDark), empty = mixHex(col, _pk, S.emptyDark);
   const poly = (pts, close = true) => { g.beginPath(); g.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) g.lineTo(pts[i], pts[i + 1]); if (close) g.closePath(); };
@@ -436,7 +454,12 @@ function paintPlate(g, { cat, type, name, lvl, hp, maxHp }) {
   poly([90, 48, 160, 48, 176, 40], false); g.stroke();
   poly([232, 78, 640, 78], false); g.stroke();
   poly([760, 78, 860, 78, 878, 60, 930, 60], false); g.stroke();
-  poly([290, 222, 330, 222, 350, 200, 900, 200], false); g.stroke();
+  if (xp == null) { poly([290, 222, 330, 222, 350, 200, 900, 200], false); g.stroke(); }
+  else { // barre d'expérience fine sous la bande
+    g.shadowBlur = 0; poly([250, 198, 900, 198, 894, 210, 244, 210]); g.fillStyle = empty; g.fill();
+    if (xp > 0) { poly([250, 198, 250 + 650 * xp, 198, 244 + 650 * xp, 210, 244, 210]); g.fillStyle = light; g.fill(); }
+    g.shadowBlur = S.glow; g.strokeStyle = col;
+  }
   poly([90, 228, 160, 228], false); g.stroke();
   // symbole en pixels
   const icon = PLATE_ICONS[type === 'npc' ? 'npc' : type === 'player' ? 'player' : cat === 'boss' ? 'boss' : cat === 'legendary' ? 'legendary' : 'monster'];
@@ -472,7 +495,7 @@ class Plate {
   draw(m) {
     const cat = plateCategory(m), k = m.kind;
     const lvl = cat === 'legendary' ? scramble(Math.floor(time / PLATE_STYLE.scrambleSpeed)) : (k.level != null ? String(k.level) : '');
-    const key = cat + '|' + fmt(m.hp) + '|' + lvl;
+    const key = cat + '|' + fmt(m.hp) + '|' + lvl + '|' + player.level;
     if (key === this.key) return; this.key = key;
     paintPlate(this.canvas.getContext('2d'), { cat, type: k.cat, name: k.name, lvl, hp: m.hp, maxHp: m.maxHp });
     this.tex.needsUpdate = true;
@@ -486,6 +509,128 @@ class Plate {
     this.mesh.lookAt(playerPos);
   }
 }
+
+/* ================= Joueur : PV, niveaux, XP ================= */
+const SAVE_KEY = 'voxelblade.save.v1';
+const player = { level: 1, xp: 0, hp: 100, maxHp: 100, dead: false, invuln: 0, deathT: 0, lastHurt: -99, lostXp: 0, respawned: false };
+try { const d = JSON.parse(localStorage.getItem(SAVE_KEY)); if (d && d.level) { player.level = d.level; player.xp = d.xp || 0; } } catch (e) { }
+player.maxHp = player.hp = maxHpFor(player.level);
+function saveGame() { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ level: player.level, xp: player.xp })); } catch (e) { } }
+function xpFor(m) {
+  if (m.kind.cat === 'npc') return 0;
+  const f = THREE.MathUtils.clamp(1 + 0.15 * (m.kind.level - player.level), 0.2, 2);
+  return Math.max(1, Math.round(12 * m.kind.level * f));
+}
+function gainXp(n) {
+  player.xp += n; let up = false;
+  while (player.xp >= xpNeeded(player.level)) { player.xp -= xpNeeded(player.level); player.level++; up = true; }
+  if (up) { player.maxHp = maxHpFor(player.level); player.hp = player.maxHp; toast('NIVEAU ' + player.level + ' !', '#ffd23a'); playLevelUp(); }
+  saveGame();
+}
+const playerInLeash = () => Math.hypot(playerPos.x, playerPos.z) < LEASH;
+const chestPos = out => out.set(playerPos.x, playerPos.y - 0.35, playerPos.z);
+function damagePlayer(n) {
+  if (player.dead || player.invuln > 0) return;
+  player.hp = Math.max(0, player.hp - n); player.invuln = 0.5; player.lastHurt = time; hurtFx = 1;
+  playHurt();
+  for (const g of grips) { const gp = g.userData.source?.gamepad; try { gp?.hapticActuators?.[0]?.pulse?.(0.9, 120); } catch (e) { } }
+  if (player.hp <= 0) {
+    player.dead = true; player.deathT = 0; player.respawned = false;
+    player.lostXp = Math.floor(player.xp * DEATH_XP_LOSS); player.xp -= player.lostXp; saveGame();
+  }
+}
+function respawn() {
+  rig.rotation.y = 0; rig.updateMatrixWorld(true); camera.getWorldPosition(_h0);
+  rig.position.x += RESPAWN[0] - _h0.x; rig.position.z += RESPAWN[1] - _h0.z;
+  swordState.hasPrev = false; player.hp = player.maxHp;
+  for (const sp of spores) sp.remove(); spores.length = 0;
+  for (const m of monsters) { m.atk = null; m.engagedUntil = -1; }
+  toast('Tu es mort' + (player.lostXp ? '  ·  -' + player.lostXp + ' XP' : ''), '#ff6b4a');
+}
+function updatePlayer(dt) {
+  if (player.invuln > 0) player.invuln -= dt;
+  if (!player.dead && player.hp < player.maxHp && time - player.lastHurt > 6) player.hp = Math.min(player.maxHp, player.hp + 3 * dt); // récupération hors combat
+  hurtFx *= Math.exp(-dt * 3);
+  let fade = 0;
+  if (player.dead) {
+    player.deathT += dt;
+    fade = Math.min(1, player.deathT / 0.7);
+    if (player.deathT >= 1 && !player.respawned) { player.respawned = true; respawn(); }
+    if (player.deathT >= 1) fade = Math.max(0, 1 - (player.deathT - 1) / 0.8);
+    if (player.deathT >= 1.8) player.dead = false;
+  }
+  vignette.material.opacity = Math.min(1, hurtFx * 0.9 + (player.hp / player.maxHp < 0.25 ? 0.25 + 0.1 * Math.sin(time * 5) : 0));
+  vignette.visible = vignette.material.opacity > 0.01;
+  blackout.material.opacity = fade; blackout.visible = fade > 0.005;
+  wrist.update();
+  if (toastT > 0) { toastT -= dt; toastMesh.material.opacity = Math.min(1, toastT / 0.5); toastMesh.visible = toastT > 0; }
+}
+
+/* ===== effets écran (attachés à la tête) ===== */
+let hurtFx = 0;
+const vignette = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(128, 128, 50, 128, 128, 128); gr.addColorStop(0, 'rgba(200,0,0,0)'); gr.addColorStop(0.6, 'rgba(200,0,0,.35)'); gr.addColorStop(1, 'rgba(160,0,0,.95)');
+  g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthTest: false, depthWrite: false, opacity: 0 }));
+  m.position.z = -0.2; m.renderOrder = 1000; m.visible = false; camera.add(m); return m;
+})();
+const blackout = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, depthTest: false, depthWrite: false, opacity: 0 }));
+blackout.position.z = -0.15; blackout.renderOrder = 1001; blackout.visible = false; camera.add(blackout);
+// message temporaire (montée de niveau, mort)
+const toastCanvas = document.createElement('canvas'); toastCanvas.width = 1024; toastCanvas.height = 128;
+const toastTex = new THREE.CanvasTexture(toastCanvas); toastTex.colorSpace = THREE.SRGBColorSpace;
+const toastMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.08), new THREE.MeshBasicMaterial({ map: toastTex, transparent: true, depthTest: false, depthWrite: false }));
+toastMesh.position.set(0, 0.1, -0.9); toastMesh.renderOrder = 1002; toastMesh.visible = false; camera.add(toastMesh);
+let toastT = 0;
+function toast(text, color) {
+  const g = toastCanvas.getContext('2d'); g.clearRect(0, 0, 1024, 128);
+  g.font = 'italic bold 72px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 12; g.strokeStyle = 'rgba(0,0,0,.85)'; g.strokeText(text, 512, 66); g.fillStyle = color; g.fillText(text, 512, 66);
+  toastTex.needsUpdate = true; toastT = 2.8; toastMesh.visible = true;
+}
+// plaque du joueur (poignet gauche en VR, coin de l'écran à la souris)
+const wrist = (() => {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 256;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.05), new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false }));
+  mesh.renderOrder = 20; let key = '';
+  return {
+    mesh,
+    update() {
+      const k = Math.ceil(player.hp) + '|' + player.maxHp + '|' + player.level + '|' + player.xp;
+      if (k === key) return; key = k;
+      paintPlate(c.getContext('2d'), { cat: 'player', type: 'player', name: 'Toi', lvl: String(player.level), hp: player.hp, maxHp: player.maxHp, xp: player.xp / xpNeeded(player.level) });
+      t.needsUpdate = true;
+    },
+    onWrist(grip) { grip.add(mesh); mesh.position.set(0, 0.055, 0.07); mesh.rotation.set(-Math.PI / 2 + 0.6, 0, 0); mesh.scale.setScalar(1); },
+    onScreen() { camera.add(mesh); mesh.position.set(-0.2, -0.17, -0.45); mesh.rotation.set(0, 0, 0); mesh.scale.setScalar(1); },
+  };
+})();
+
+/* ===== spores (projectiles du champignon) ===== */
+const spores = [];
+const sporeMat = new THREE.MeshLambertMaterial({ color: 0xa25ad6, emissive: 0x5a1f86, emissiveIntensity: 0.8 });
+class Spore {
+  constructor(pos, vel, dmg) {
+    this.g = new THREE.Group(); this.g.position.copy(pos); this.vel = vel.clone(); this.dmg = dmg; this.life = 4;
+    for (const [x, y, z] of [[0, 0, 0], ...NB6]) { const b = new THREE.Mesh(boxGeo, sporeMat); b.scale.setScalar(V * 0.85); b.position.set(x * V * 0.8, y * V * 0.8, z * V * 0.8); this.g.add(b); }
+    scene.add(this.g);
+  }
+  burst(n) { const p = this.g.position; for (let i = 0; i < n; i++) spawnParticle(p.x, p.y, p.z, (rnd() - 0.5) * 2.4, rnd() * 2, (rnd() - 0.5) * 2.4, 0xa25ad6, V * 0.5, 0.5 + rnd() * 0.4); }
+  remove() { scene.remove(this.g); }
+  update(dt) { // renvoie false quand la spore disparaît
+    this.life -= dt; this.g.position.addScaledVector(this.vel, dt); this.g.rotation.x += dt * 5; this.g.rotation.y += dt * 4;
+    const p = this.g.position;
+    if (swordNear(p, 0.13)) { this.burst(14); playTink(); haptic(0.5, 30); this.remove(); return false; }            // tranchée / parée
+    chestPos(_h1);
+    if (p.distanceTo(playerPos) < 0.22 || p.distanceTo(_h1) < 0.3) { this.burst(10); damagePlayer(this.dmg); this.remove(); return false; }
+    if (p.y < 0.05 || this.life <= 0) { this.burst(6); this.remove(); return false; }
+    return true;
+  }
+}
+function updateSpores(dt) { for (let i = spores.length - 1; i >= 0; i--) if (!spores[i].update(dt)) spores.splice(i, 1); }
 
 const NB6 = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 /* ================= Monstres ================= */
@@ -550,7 +695,7 @@ class Monster {
     else { const d = dirOf(this.slot - rig.rotation.y); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5); }
     this.group.scale.setScalar(0.001); this.group.visible = true;
     this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0;
-    this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.coreBroken = false; this.vel.set(0, 0, 0); this.stun = 0; this.jy = 0; this.jv = 0;
+    this.state = 'spawning'; this.t = 0; this.pendingDetach = false; this.lastHit = -10; this.atk = null; this.atkCd = 2 + rnd() * 2; this.coreBroken = false; this.vel.set(0, 0, 0); this.stun = 0; this.jy = 0; this.jv = 0;
   }
   pickWaypoint() { // point au hasard dans la clairière, plutôt devant le joueur
     const a = (rnd() - 0.5) * 2.6, r = 2.6 + rnd() * 3.2;
@@ -645,6 +790,55 @@ class Monster {
     this.alive[best] = 1; this.aliveCount++; this.setVoxel(best, true);
     this.hp = Math.min(this.maxHp, this.hp + (this.dmgTaken[best] || DMG_PER_VOXEL)); this.dmgTaken[best] = 0;
   }
+  endAttack() { const A = this.kind.attack; this.atk = null; this.atkCd = A.cooldown[0] + rnd() * (A.cooldown[1] - A.cooldown[0]); }
+  // attaques : toujours annoncées (préparation visible), parables avec n'importe quelle partie de l'épée
+  updateAttack(dt) {
+    const A = this.kind.attack, g = this.group;
+    if (!A || this.state !== 'alive') return false;
+    if (!this.atk) {
+      if (player.dead || !playerInLeash() || this.stun > 0) return false;
+      if (Math.hypot(playerPos.x - g.position.x, playerPos.z - g.position.z) > A.range) return false;
+      this.atkCd -= dt; if (this.atkCd > 0) return false;
+      this.atk = { phase: 'wind', t: 0 }; this.engagedUntil = time + PLATE_SHOW_TIME; playWarn();
+    }
+    const a = this.atk; a.t += dt;
+    if (a.phase === 'wind') {
+      const k = Math.min(1, a.t / A.wind);
+      this.mat.emissive.setHex(0xff7a2a); this.mat.emissiveIntensity = Math.max(this.mat.emissiveIntensity, 0.12 + 0.3 * k * Math.abs(Math.sin(a.t * 16)));
+      if (A.type === 'leap') g.scale.set(1 + 0.15 * k, 1 - 0.3 * k, 1 + 0.15 * k);
+      else { const p = 1 + 0.1 * k * Math.sin(a.t * 22); g.scale.set(p, 1 + 0.06 * k, p); }
+      if (a.t >= A.wind) {
+        g.scale.set(1, 1, 1);
+        if (A.type === 'leap') { a.phase = 'leap'; a.t = 0; a.from = g.position.clone(); chestPos(a.to = new V3()); a.to.y = Math.max(0, a.to.y - this.model.height * 0.5); }
+        else { this.spit(); this.endAttack(); }
+      }
+      return A.type === 'leap';
+    }
+    // bond
+    const k = Math.min(1, a.t / A.dur);
+    g.position.lerpVectors(a.from, a.to, k); g.position.y += Math.sin(k * Math.PI) * 0.35;
+    g.scale.set(0.9, 1.15, 0.9); g.updateMatrixWorld();
+    _cen.set(0, this.model.height / 2, 0).applyMatrix4(g.matrixWorld);
+    let ax = g.position.x - playerPos.x, az = g.position.z - playerPos.z; const al = Math.hypot(ax, az) || 1; ax /= al; az /= al;
+    if (swordNear(_cen, this.model.radius * 0.85)) {                     // paré !
+      this.vel.set(0, 0, 0); this.impulse(ax * 3.5, az * 3.5, 3.5, false); this.stun = 1.3;
+      this.jy = Math.max(0, g.position.y); this.jv = 1.5; g.scale.set(1, 1, 1);
+      playClang(); haptic(1, 70); this.mat.emissive.setHex(0xffffff); this.mat.emissiveIntensity = 0.8; this.endAttack(); return true;
+    }
+    chestPos(_h0);
+    if (_cen.distanceTo(_h0) < this.model.radius * 0.7 + 0.2) {          // touché
+      damagePlayer(A.dmg); this.impulse(ax * 2.5, az * 2.5, 3, false); this.stun = 0.8;
+      this.jy = Math.max(0, g.position.y); this.jv = 0; g.scale.set(1, 1, 1); this.endAttack(); return true;
+    }
+    if (k >= 1) { this.jy = Math.max(0, g.position.y); this.jv = 0; g.scale.set(1, 1, 1); this.endAttack(); }  // esquivé : il retombe
+    return true;
+  }
+  spit() {
+    const A = this.kind.attack, g = this.group;
+    const from = new V3(0, this.model.height * 0.4, this.model.radius * 0.6).applyMatrix4(g.matrixWorld);
+    chestPos(_h0); _h0.y += 0.1;
+    spores.push(new Spore(from, _h0.sub(from).normalize().multiplyScalar(A.speed), A.dmg)); playSpit();
+  }
   // noyau tranché : mort immédiate
   breakCore(point) {
     if (this.coreBroken) return;
@@ -702,6 +896,8 @@ class Monster {
     this.group.visible = false; this.engagedUntil = -1;
     if (this.num) { this.num.release(this.coreBroken ? 'core' : true); this.num = null; }
     playDeath(); haptic(1, 120);
+    const xp = xpFor(this);
+    if (xp) { const n = new DmgNumber(_v.set(cx, cy + 0.45, cz)); n.label = '+' + xp + ' XP'; n.labelColor = '#9be15d'; n.release(); gainXp(xp); }
   }
   update(dt) {
     if (this.state === 'dead') { this.plate.update(dt, this, false, 0); this.timer -= dt; if (this.timer <= 0) this.spawn(); return; }
@@ -711,8 +907,10 @@ class Monster {
       if (this.t >= 0.6) { this.state = 'alive'; g.scale.setScalar(1); }
     }
     if (this.stun > 0) this.stun -= dt;
+    const atkCtl = this.updateAttack(dt);
     let mx = 0, mz = 0, step = 0;
-    if (this.kind.behavior === 'passive') {
+    if (atkCtl) { /* l'attaque contrôle le mouvement */ }
+    else if (this.kind.behavior === 'passive') {
       if (time < this.fleeUntil) { // fuit le joueur
         mx = g.position.x - playerPos.x; mz = g.position.z - playerPos.z; const l = Math.hypot(mx, mz) || 1; mx /= l; mz /= l;
         if (Math.hypot(g.position.x, g.position.z) > 14) { mx = -g.position.x; mz = -g.position.z; const l2 = Math.hypot(mx, mz); mx /= l2; mz /= l2; }
@@ -725,19 +923,21 @@ class Monster {
     } else if (this.kind.behavior === 'idle') { // reste à son poste
       mx = this.kind.home[0] - g.position.x; mz = this.kind.home[1] - g.position.z; const l = Math.hypot(mx, mz);
       if (l > 0.05) { mx /= l; mz /= l; step = Math.min(l, 0.6 * dt); } else mx = mz = 0;
-    } else { // va se placer devant le joueur
-      const d = dirOf(this.slot - rig.rotation.y);
-      mx = playerPos.x + d.x * 1.25 - g.position.x; mz = playerPos.z + d.z * 1.25 - g.position.z; const l = Math.hypot(mx, mz);
+    } else { // va se placer devant le joueur… tant qu'il reste dans la clairière
+      let tx, tz;
+      if (playerInLeash() && !player.dead) { const d = dirOf(this.slot - rig.rotation.y); tx = playerPos.x + d.x * 1.25; tz = playerPos.z + d.z * 1.25; }
+      else { const d = dirOf(this.slot); tx = d.x * 1.8; tz = d.z * 1.8; }
+      mx = tx - g.position.x; mz = tz - g.position.z; const l = Math.hypot(mx, mz);
       if (l > 0.04) { mx /= l; mz /= l; step = Math.min(l, 1.1 * dt); } else mx = mz = 0;
     }
     const moving = step > 0 && this.stun <= 0;
     if (moving) { g.position.x += mx * step; g.position.z += mz * step; }
     g.position.x += this.vel.x * dt; g.position.z += this.vel.z * dt; this.vel.multiplyScalar(Math.exp(-dt * 4));
     // ne jamais être poussé dans le joueur
-    { const px = g.position.x - playerPos.x, pz = g.position.z - playerPos.z, pd = Math.hypot(px, pz), minD = this.model.radius * 0.8 + 0.25;
+    if (!atkCtl) { const px = g.position.x - playerPos.x, pz = g.position.z - playerPos.z, pd = Math.hypot(px, pz), minD = this.model.radius * 0.8 + 0.25;
       if (pd < minD && pd > 1e-4) { g.position.x = playerPos.x + px / pd * minD; g.position.z = playerPos.z + pz / pd * minD; } }
     // petit saut quand on le bouscule
-    if (this.jy > 0 || this.jv > 0) { this.jv -= 9.8 * dt; this.jy += this.jv * dt; if (this.jy <= 0) { this.jy = 0; this.jv = 0; } }
+    if (!atkCtl && (this.jy > 0 || this.jv > 0)) { this.jv -= 9.8 * dt; this.jy += this.jv * dt; if (this.jy <= 0) { this.jy = 0; this.jv = 0; } }
     // regarde le joueur
     const want = this.kind.behavior === 'passive'
       ? (moving ? Math.atan2(mx, mz) : this.yaw)
@@ -745,7 +945,7 @@ class Monster {
     let dy = want - this.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); this.yaw += dy * Math.min(1, dt * 6);
     g.rotation.y = this.yaw;
     // animation
-    if (this.state === 'alive') {
+    if (this.state === 'alive' && !atkCtl && !this.atk) {
       this.phase += dt * (moving ? 8 : 3);
       if (this.kind.hop) {
         const h = Math.abs(Math.sin(this.phase));
@@ -762,6 +962,7 @@ class Monster {
       while (this.regenTimer >= rg.interval) { this.regenTimer -= rg.interval; this.regrowOne(); }
     } else this.regenTimer = 0;
     this.mat.emissiveIntensity *= Math.exp(-dt * 14);
+    if (!this.atk && this.mat.emissiveIntensity < 0.02) this.mat.emissive.setHex(0xffffff);
     this.coreMat.color.setHex(CORE_COLOR).multiplyScalar(0.75 + 0.25 * Math.sin(time * 6 + this.phase));
     g.updateMatrixWorld();
     if (this.pendingDetach && time - this.lastHit > 0.12) { this.pendingDetach = false; this.checkDetached(); }
@@ -791,6 +992,14 @@ const sword = new THREE.Group();
   }
 }
 let swingId = 1;
+const swordA = new V3(), swordB = new V3(), _sq = new V3();
+// distance d'un point à toute l'épée (pommeau → pointe)
+function swordNear(p, r) {
+  if (!swordState.holder) return false;
+  _sq.subVectors(swordB, swordA); const l2 = _sq.lengthSq();
+  const t = THREE.MathUtils.clamp(_v.subVectors(p, swordA).dot(_sq) / l2, 0, 1);
+  return _v.copy(swordA).addScaledVector(_sq, t).distanceTo(p) < r;
+}
 const swordState = { holder: null, hasPrev: false, prevB: new V3(), prevT: new V3(), tipSpeed: 0, edge: 0 };
 function giveSword(holder) {
   if (swordState.holder?.userData.fist) swordState.holder.userData.fist.visible = true;
@@ -818,6 +1027,7 @@ for (let i = 0; i < 2; i++) {
   const fist = new THREE.Mesh(boxGeo, skinMat); fist.scale.set(0.07, 0.075, 0.1); grip.add(fist); grip.userData.fist = fist;
   grip.addEventListener('connected', e => {
     grip.userData.source = e.data;
+    if (e.data.handedness === 'left') wrist.onWrist(grip);
     if (!swordState.holder || e.data.handedness === 'right') giveSword(grip);
   });
   grip.addEventListener('disconnected', () => {
@@ -910,6 +1120,7 @@ function updateSword(dt) {
   sword.updateWorldMatrix(true, false);
   _B.set(0, 0, -BLADE_START).applyMatrix4(sword.matrixWorld);
   _T.set(0, 0, -(BLADE_START + BLADE_LEN)).applyMatrix4(sword.matrixWorld);
+  swordA.set(0, 0, 0.11).applyMatrix4(sword.matrixWorld); swordB.copy(_T);
   let reset = !swordState.hasPrev;
   if (swordState.hasPrev) {
     const jump = _T.distanceTo(swordState.prevT);
@@ -998,7 +1209,7 @@ const $ = id => document.getElementById(id);
 const ui = $('ui'), statusEl = $('status'), vrBtn = $('vrBtn'), deskBtn = $('deskBtn'), hud = $('hud');
 let mode = 'menu';
 function showMenu() { mode = 'menu'; ui.hidden = false; hud.hidden = true; dropSword(); camera.position.set(0, 1.6, 0); camera.rotation.set(-0.68, 0, 0); }
-deskBtn.onclick = () => { initAudio(); mode = 'desktop'; ui.hidden = true; hud.hidden = false; giveSword(deskHand); };
+deskBtn.onclick = () => { initAudio(); wrist.onScreen(); mode = 'desktop'; ui.hidden = true; hud.hidden = false; giveSword(deskHand); };
 addEventListener('keydown', e => { if (e.key === 'Escape' && mode === 'desktop') showMenu(); });
 vrBtn.onclick = async () => {
   initAudio();
@@ -1037,11 +1248,13 @@ renderer.setAnimationLoop(() => {
   camera.getWorldPosition(playerPos);
   updateSword(dt);
   for (const m of monsters) m.update(dt);
+  updateSpores(dt);
+  updatePlayer(dt);
   updateParticles(dt);
   updateNumbers(dt);
   renderer.render(scene, camera);
 });
-window.__game = { bumpSwing: () => ++swingId, camera, paintPlate, CAT_COLORS, rig, monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
+window.__game = { player, spores, damagePlayer, gainXp, bumpSwing: () => ++swingId, camera, paintPlate, CAT_COLORS, rig, monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
 </script>
 </body>
 </html>
