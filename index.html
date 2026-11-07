@@ -1078,14 +1078,22 @@ class Monster {
     this.plate.update(dt, this, time < this.engagedUntil, g.position.y + this.model.height * g.scale.y);
   }
 }
-// Le slime vient du fichier dessiné dans l'éditeur (creatures/slime.json) ; à défaut, version codée.
-let SLIME_KIND = SLIME;
-try {
-  const r = await fetch('creatures/slime.json?v=' + Date.now());
-  if (r.ok) { const dec = decodeCreature(await r.json()); SLIME_KIND = { ...SLIME, name: dec.name || SLIME.name, core: null, shell: null, build: () => buildModelFromFile(dec) }; }
-} catch (e) { console.warn('Créature non chargée, version codée utilisée :', e); }
-// test en cours : seul le slime est actif (les autres créatures sont gardées dans le code)
-const monsters = [new Monster(SLIME_KIND, 0)];
+// Créatures dessinées dans l'éditeur (dossier creatures/). Le comportement (PV, niveau, attaque…) vient
+// encore du code, en attendant l'éditeur de fiches de monstres.
+const CREATURES = [
+  { file: 'slime', base: SLIME, slot: -0.45 },                                     // repli : slime codé si le fichier manque
+  { file: 'pignon', base: MUSHROOM, slot: 0.45, overrides: { hp: 1500, level: 3 }, optional: true },
+];
+const monsters = [];
+for (const c of CREATURES) {
+  let kind = null;
+  try {
+    const r = await fetch('creatures/' + c.file + '.json?v=' + Date.now());
+    if (r.ok) { const dec = decodeCreature(await r.json()); kind = { ...c.base, ...(c.overrides || {}), name: dec.name || c.base.name, core: null, shell: null, build: () => buildModelFromFile(dec) }; }
+  } catch (e) { console.warn('Créature « ' + c.file + ' » non chargée :', e); }
+  if (!kind && !c.optional) kind = c.base;
+  if (kind) monsters.push(new Monster(kind, c.slot));
+}
 
 /* ================= Épée ================= */
 const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdfe7ef, metalness: 0.5, roughness: 0.3, emissive: 0x112233 });
