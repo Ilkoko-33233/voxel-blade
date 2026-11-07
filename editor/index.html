@@ -852,10 +852,15 @@ $('gOk').onclick = async () => {
   if (!c.owner || !c.repo || !c.token) { toast('Renseigne le dépôt et le jeton'); return; }
   lsSet(LS.git, JSON.stringify(c));
   P.name = $('cName').value.trim() || 'Créature';
-  if (!P.id) P.id = slug(P.name) + '-' + Math.random().toString(36).slice(2, 6);
   const rel = creaturePath(), path = 'creatures/' + rel;
   $('gOk').disabled = true; $('gOk').textContent = 'Envoi…';
   try {
+    // créature sans identifiant (ancienne sauvegarde) : si une créature du même nom existe déjà, proposer de la remplacer
+    if (!P.id) {
+      const ig0 = await ghGet('creatures/index.json'), same = ig0 && ig0.json && (ig0.json.creatures || []).find(e => slug(e.name) === slug(P.name));
+      if (same && confirm('Une créature « ' + same.name + ' » existe déjà dans le dépôt (' + catLabel(same.path.split('/').slice(0, -1).join('/')) + ').\nOK : la remplacer par celle-ci · Annuler : l\'envoyer comme une nouvelle créature')) P.id = same.id;
+    }
+    if (!P.id) P.id = slug(P.name) + '-' + Math.random().toString(36).slice(2, 6);
     // 1. la créature
     const cur = await ghGet(path);
     await ghPut(c, path, serialize(), cur && cur.sha, (cur ? 'Mise à jour' : 'Ajout') + ' de la créature « ' + P.name + ' » (éditeur)');

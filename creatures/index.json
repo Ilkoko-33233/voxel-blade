@@ -10,14 +10,6 @@
  },
  "creatures": [
   {
-   "id": "pignon",
-   "name": "Pignon",
-   "path": "monstres/champignons/pignon.json",
-   "rank": "monster",
-   "level": 3,
-   "spawnTest": true
-  },
-  {
    "id": "pignon-8dju",
    "name": "Pignon",
    "path": "monstres/foret/pignon.json",
