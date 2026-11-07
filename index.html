@@ -35,12 +35,21 @@
 import * as THREE from 'three';
 
 /* ================= Réglages ================= */
-const V = 0.08;               // taille d'un voxel (m)
+const V = 0.04;               // taille d'un voxel (m)
 const BLADE_START = 0.09;     // début de la lame depuis la main (m)
 const BLADE_LEN = 0.95;       // longueur de lame (m)
 const MIN_CUT_SPEED = 1.0;    // vitesse mini d'un point de lame pour couper (m/s)
 const EDGE_MIN = 0.6;         // alignement mini mouvement/tranchant pour couper (1 = parfaitement de taille)
-const DMG_PER_VOXEL = 1;      // dégâts de base par voxel traversé
+const DMG_PER_VOXEL = 1;      // (ancien système, encore utilisé par les morceaux détachés)
+const WEAPON_DMG = 10;        // dégâts de l'arme par cube, à vitesse normale (×1)
+// Types de cubes : PV de chaque cube et comportement
+const MATERIALS = {
+  gel:   { name: 'Gelée',    hp: 30, regen: true,  look: 'dark' },
+  eye:   { name: 'Œil',      hp: 15, regen: true,  look: 'dark', weak: 3 },   // point faible : dégâts ×3 sur les PV du monstre
+  shell: { name: 'Carapace', hp: 60, regen: false, look: 'pale', tunnel: true }, // un trou percé reste ouvert
+  core:  { name: 'Noyau',    hp: 20, regen: false, core: true },              // détruit = mort immédiate
+};
+const MAT_IDS = Object.keys(MATERIALS);
 const WEAK_MULT = 3;          // multiplicateur sur les points faibles (yeux)
 const CORE_COLOR = 0xff3ad0;   // couleur lumineuse des noyaux
 const DEATH_XP_LOSS = 0.1;    // part de l'XP du niveau en cours perdue à la mort (0 = aucune perte)
@@ -167,7 +176,7 @@ function drawSign() {
   g.font = 'bold 76px system-ui, sans-serif'; g.fillText('VOXEL BLADE', 512, 110);
   g.font = '34px system-ui, sans-serif'; g.globalAlpha = .8; g.fillText('prototype — test de découpe', 512, 160); g.globalAlpha = 1;
   g.font = '35px system-ui, sans-serif'; g.textAlign = 'left';
-  ['• Seul le tranchant coupe · vite = plus de dégâts', '• Plat ou coup lent : repousse · toute l\'épée pare', '• Yeux ×3 · noyau tranché = mort immédiate', '• Les monstres annoncent leurs attaques : pare !', '• Joystick G : marcher · D : tourner · Gâchette : épée', '• Ta vie et ton niveau : sur ton poignet gauche']
+  ['• Arme : 10 dégâts × vitesse · gelée 30 PV, carapace 60', '• La lame s\'arrête sur un cube qu\'elle ne casse pas', '• Plat ou coup lent : repousse · toute l\'épée pare', '• Yeux ×3 · noyau tranché = mort immédiate', '• Joystick G : marcher · D : tourner · Gâchette : épée', '• Ta vie et ton niveau : sur ton poignet gauche']
     .forEach((t, i) => g.fillText(t, 60, 222 + i * 52));
   g.textAlign = 'center'; g.font = 'bold 46px system-ui, sans-serif'; g.fillStyle = '#ffd23a';
   g.fillText('Monstres vaincus : ' + kills, 512, 545);
@@ -331,22 +340,21 @@ function buildModel(nx, ny, nz, shape, paint) {
 const tint = (hex, amt) => _c.setHex(hex).offsetHSL(0, 0, amt).getHex();
 
 const SLIME = {
-  core: { x: [-1, 1], j: [4, 6], z: [-1, 1] },  // au centre
-  // carapace : couche intérieure autour du noyau (fissure au 1er coup, casse au 2e, ne repousse jamais)
-  shell: { thickness: 1, color: 0x237a3a, cracked: 0xb9d98a, dmg: 0.5 },
-  // régénération de la couche extérieure
-  regen: { delay: 2, interval: 0.1 },
+  core: { x: [-2, 2], j: [9, 13], z: [-2, 2] },     // au centre (20 cm)
+  shell: { thickness: 2, color: 0x237a3a },          // carapace de 8 cm autour du noyau
+  regen: { delay: 2, interval: 0.1, perTick: 2, heal: 10 }, // repousse + soin des cubes abîmés (PV/s)
   attack: { type: 'leap', range: 1.9, wind: 0.7, dur: 0.45, dmg: 12, cooldown: [2.5, 4.5] }, // se tasse puis bondit
-  name: 'Slime', level: 1, cat: 'monster', behavior: 'approach', hp: 500, hop: true,
-  build: () => buildModel(15, 12, 15,
-    (x, j, z) => { const y = j + 0.5 - 4.5, ry = y < 0 ? 4.5 : 7.5, r = 7.2; return (x * x + z * z) / (r * r) + (y * y) / (ry * ry) <= 1; },
+  name: 'Slime', level: 1, cat: 'monster', behavior: 'approach', hp: 3000, hop: true,
+  build: () => buildModel(29, 24, 29,
+    (x, j, z) => { const y = j + 0.5 - 9, ry = y < 0 ? 9 : 15, r = 14.4; return (x * x + z * z) / (r * r) + (y * y) / (ry * ry) <= 1; },
     (x, j, z, { depth }) => {
-      if (depth <= 1 && j >= 6 && j <= 7 && (x === -3 || x === -2 || x === 2 || x === 3)) {
-        const hl = depth === 0 && j === 7 && (x === -3 || x === 2);
+      const ex = Math.abs(x);
+      if (depth <= 2 && j >= 12 && j <= 15 && ex >= 4 && ex <= 7) {           // yeux
+        const hl = depth === 0 && j >= 14 && (x === -6 || x === -5 || x === 5 || x === 6) && j === 15 - (ex === 6 ? 0 : 0);
         return { c: hl ? 0xffffff : 0x1a1a2e, w: true };
       }
-      if (depth === 0 && j === 4 && x >= -1 && x <= 1) return { c: 0x245a2c };
-      const base = _c.setHex(0x34a048).lerp(new THREE.Color(0x9cf08a), j / 11).getHex();
+      if (depth <= 1 && (j === 8 || j === 9) && ex <= 2) return { c: 0x245a2c };  // bouche
+      const base = _c.setHex(0x34a048).lerp(new THREE.Color(0x9cf08a), j / 23).getHex();
       return { c: tint(base, (hash3(x, j, z) - 0.5) * 0.06) };
     })
 };
@@ -641,54 +649,102 @@ let time = 0;
 class Monster {
   constructor(kind, slot) {
     this.kind = kind; this.slot = slot; this.model = kind.build();
-    const n = this.model.count;
+    const n = this.model.count, m = this.model;
     this.mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0 });
-    this.mesh = new THREE.InstancedMesh(boxGeo, this.mat, n); this.mesh.frustumCulled = false;
-    // noyau : voxels marqués, rendus à part avec une matière lumineuse
-    const m = this.model, cb = kind.core; this.coreIdx = new Int32Array(n).fill(-1); let nc = 0;
-    if (cb) for (let i = 0; i < n; i++) {
+    // seuls les cubes visibles (en surface) occupent une place dans le maillage
+    this.mesh = new THREE.InstancedMesh(boxGeo, this.mat, n); this.mesh.frustumCulled = false; this.mesh.count = 0;
+    this.mesh.setColorAt(0, _c.setHex(0xffffff));
+    this.slotOf = new Int32Array(n).fill(-1); this.voxOfSlot = new Int32Array(n);
+    // matières : noyau (boîte kind.core), carapace (autour du noyau), yeux (points faibles), gelée
+    const cb = kind.core, sh = kind.shell; this.coreIdx = new Int32Array(n).fill(-1); let nc = 0;
+    this.matIdx = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
       const x = m.vi[i] - m.cx, j = m.vj[i], z = m.vk[i] - m.cz;
-      if (x >= cb.x[0] && x <= cb.x[1] && j >= cb.j[0] && j <= cb.j[1] && z >= cb.z[0] && z <= cb.z[1]) { this.coreIdx[i] = nc++; m.col[i] = CORE_COLOR; }
+      const inBox = t => cb && x >= cb.x[0] - t && x <= cb.x[1] + t && j >= cb.j[0] - t && j <= cb.j[1] + t && z >= cb.z[0] - t && z <= cb.z[1] + t;
+      let mt = m.weak[i] ? 'eye' : 'gel';
+      if (inBox(0)) { mt = 'core'; this.coreIdx[i] = nc++; m.col[i] = CORE_COLOR; }
+      else if (sh && inBox(sh.thickness)) { mt = 'shell'; m.col[i] = sh.color; }
+      this.matIdx[i] = MAT_IDS.indexOf(mt);
     }
+    this.shell = new Uint8Array(n); for (let i = 0; i < n; i++) this.shell[i] = MAT_IDS[this.matIdx[i]] === 'shell' ? 1 : 0;
     this.coreMat = new THREE.MeshBasicMaterial({ color: CORE_COLOR });
     this.coreMesh = new THREE.InstancedMesh(boxGeo, this.coreMat, Math.max(1, nc)); this.coreMesh.frustumCulled = false; this.coreMesh.count = nc;
-    // carapace : voxels à « thickness » du noyau
-    this.shell = new Uint8Array(n); const sh = kind.shell;
-    if (sh && cb) for (let i = 0; i < n; i++) {
-      if (this.coreIdx[i] >= 0) continue;
-      const x = m.vi[i] - m.cx, j = m.vj[i], z = m.vk[i] - m.cz, t = sh.thickness;
-      if (x >= cb.x[0] - t && x <= cb.x[1] + t && j >= cb.j[0] - t && j <= cb.j[1] + t && z >= cb.z[0] - t && z <= cb.z[1] + t) { this.shell[i] = 1; m.col[i] = sh.color; }
-    }
-    this.baseCol = m.col.slice();
-    this.crackSwing = new Int32Array(n); this.noRegrow = new Uint8Array(n); this.dmgTaken = new Float32Array(n);
+    this.vhp = new Float32Array(n); this.vmax = new Float32Array(n); this.vSwing = new Int32Array(n);
+    for (let i = 0; i < n; i++) this.vmax[i] = MATERIALS[MAT_IDS[this.matIdx[i]]].hp;
+    this.noRegrow = new Uint8Array(n); this.damaged = new Set();
     // distance au centre (pour repousser de l'intérieur vers l'extérieur)
     this.cy = cb ? (cb.j[0] + cb.j[1]) / 2 : m.ny / 2; this.cxz = cb ? [(cb.x[0] + cb.x[1]) / 2, (cb.z[0] + cb.z[1]) / 2] : [0, 0];
     this.d2 = new Float32Array(n);
     for (let i = 0; i < n; i++) { const x = m.vi[i] - m.cx - this.cxz[0], y = m.vj[i] - this.cy, z = m.vk[i] - m.cz - this.cxz[1]; this.d2[i] = x * x + y * y + z * z; }
     this.regenTimer = 0;
-    for (let i = 0; i < n; i++) this.mesh.setColorAt(i, _c.setHex(this.model.col[i]));
     this.group = new THREE.Group(); this.group.add(this.mesh, this.coreMesh); scene.add(this.group);
     this.alive = new Uint8Array(n); this.vel = new V3(); this.lastThud = 0; this.stun = 0; this.jy = 0; this.jv = 0; this.num = null; this.yaw = 0; this.phase = rnd() * 6;
     this.plate = new Plate(); this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0; this.wp = new V3();
     this.state = 'dead'; this.timer = 0.3 + (slot || 0.6) * 0.2;
     this.group.visible = false;
   }
-  setVoxel(i, show) {
-    const ci = this.coreIdx[i], mesh = ci >= 0 ? this.coreMesh : this.mesh, slot = ci >= 0 ? ci : i;
-    if (ci >= 0) this.writeVoxel(this.mesh, i, i, false); // la place dans le maillage normal reste vide
-    this.writeVoxel(mesh, slot, i, show);
+  matOf(i) { return MATERIALS[MAT_IDS[this.matIdx[i]]]; }
+  // couleur affichée : s'assombrit (ou pâlit) à mesure que le cube perd ses PV
+  colorFor(i) {
+    _c.setHex(this.model.col[i]);
+    const r = this.vhp[i] / this.vmax[i];
+    if (r < 1) { const k = 1 - r, look = this.matOf(i).look; if (look === 'pale') _c.lerp(_pw, 0.55 * k); else _c.multiplyScalar(1 - 0.55 * k); }
+    return _c;
   }
-  writeVoxel(mesh, slot, i, show) {
-    const a = mesh.instanceMatrix.array, o = slot * 16, p = this.model.pos, s = show ? V * 0.97 : 0;
-    a.fill(0, o, o + 16); a[o] = s; a[o + 5] = s; a[o + 10] = s;
+  isSurface(i) {
+    const m = this.model, a = m.vi[i], b = m.vj[i], c = m.vk[i];
+    for (const [p, q, r] of NB6) {
+      const x = a + p, y = b + q, z = c + r;
+      if (x < 0 || y < 0 || z < 0 || x >= m.nx || y >= m.ny || z >= m.nz) return true;
+      const o = m.grid[x + m.nx * (y + m.ny * z)];
+      if (o < 0 || !this.alive[o]) return true;
+    }
+    return false;
+  }
+  writeMatrix(mesh, slot, i, scale) {
+    const a = mesh.instanceMatrix.array, o = slot * 16, p = this.model.pos;
+    a.fill(0, o, o + 16); a[o] = scale; a[o + 5] = scale; a[o + 10] = scale;
     a[o + 12] = p[i * 3]; a[o + 13] = p[i * 3 + 1]; a[o + 14] = p[i * 3 + 2]; a[o + 15] = 1;
     mesh.instanceMatrix.needsUpdate = true;
   }
+  showSlot(i) {
+    const s = this.mesh.count++; this.slotOf[i] = s; this.voxOfSlot[s] = i;
+    this.writeMatrix(this.mesh, s, i, V * 0.97); this.mesh.setColorAt(s, this.colorFor(i)); this.mesh.instanceColor.needsUpdate = true;
+  }
+  hideSlot(i) {
+    const s = this.slotOf[i], last = this.mesh.count - 1, j = this.voxOfSlot[last];
+    if (s !== last) { // la dernière place vient boucher le trou
+      const a = this.mesh.instanceMatrix.array; a.copyWithin(s * 16, last * 16, last * 16 + 16);
+      const c = this.mesh.instanceColor.array; c.copyWithin(s * 3, last * 3, last * 3 + 3);
+      this.slotOf[j] = s; this.voxOfSlot[s] = j;
+    }
+    this.slotOf[i] = -1; this.mesh.count--;
+    this.mesh.instanceMatrix.needsUpdate = true; this.mesh.instanceColor.needsUpdate = true;
+  }
+  refreshVis(i) {
+    if (this.coreIdx[i] >= 0) return;
+    const want = this.alive[i] && this.isSurface(i), has = this.slotOf[i] >= 0;
+    if (want && !has) this.showSlot(i); else if (!want && has) this.hideSlot(i);
+  }
+  recolor(i) { const s = this.slotOf[i]; if (s >= 0) { this.mesh.setColorAt(s, this.colorFor(i)); this.mesh.instanceColor.needsUpdate = true; } }
+  // à appeler après un changement de alive[i]
+  setVoxel(i) {
+    const ci = this.coreIdx[i];
+    if (ci >= 0) this.writeMatrix(this.coreMesh, ci, i, this.alive[i] ? V * 0.97 : 0);
+    this.refreshVis(i);
+    const m = this.model, a = m.vi[i], b = m.vj[i], c = m.vk[i];
+    for (const [p, q, r] of NB6) {
+      const x = a + p, y = b + q, z = c + r;
+      if (x < 0 || y < 0 || z < 0 || x >= m.nx || y >= m.ny || z >= m.nz) continue;
+      const o = m.grid[x + m.nx * (y + m.ny * z)]; if (o >= 0) this.refreshVis(o);
+    }
+  }
   voxelWorld(i, out) { const p = this.model.pos; return out.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]).applyMatrix4(this.group.matrixWorld); }
   spawn() {
-    const n = this.model.count; this.alive.fill(1); for (let i = 0; i < n; i++) this.setVoxel(i, true);
-    if (this.kind.shell) { for (let i = 0; i < n; i++) if (this.crackSwing[i]) this.mesh.setColorAt(i, _c.setHex(this.baseCol[i])); this.mesh.instanceColor.needsUpdate = true; }
-    this.crackSwing.fill(0); this.noRegrow.fill(0); this.dmgTaken.fill(0);
+    const n = this.model.count; this.alive.fill(1);
+    this.vhp.set(this.vmax); this.vSwing.fill(0); this.noRegrow.fill(0); this.damaged.clear();
+    this.mesh.count = 0; this.slotOf.fill(-1);
+    for (let i = 0; i < n; i++) { if (this.coreIdx[i] >= 0) this.writeMatrix(this.coreMesh, this.coreIdx[i], i, V * 0.97); else if (this.isSurface(i)) this.showSlot(i); }
     this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
     if (this.kind.behavior === 'passive') { this.pickWaypoint(); this.group.position.copy(this.wp); this.pickWaypoint(); }
     else if (this.kind.behavior === 'idle') this.group.position.set(this.kind.home[0], 0, this.kind.home[1]);
@@ -733,62 +789,82 @@ class Monster {
     }
     return false;
   }
-  cutVoxel(id, speed, point, vel) {
-    const sh = this.kind.shell;
-    if (sh && this.coreIdx[id] >= 0 && !this.exposed(id)) return false; // la carapace protège encore
-    if (sh && this.shell[id]) {
-      if (this.crackSwing[id] === swingId) return false;                 // déjà fissuré pendant ce coup
-      if (!this.crackSwing[id]) {                                         // 1er coup : fissure
-        this.crackSwing[id] = swingId; this.mesh.setColorAt(id, _c.setHex(sh.cracked)); this.mesh.instanceColor.needsUpdate = true;
-        this.addDamage(DMG_PER_VOXEL * sh.dmg * speedMult(speed), false, point);
-        this.voxelWorld(id, _w); spawnParticle(_w.x, _w.y, _w.z, (rnd() - 0.5), rnd() + 0.5, (rnd() - 0.5), sh.cracked, V * 0.3, 0.4);
-        playTink(); this.onAttacked(); return true;
-      }
-      this.markTunnel(id);                                                // 2e coup : casse, et le trou restera ouvert
+  /* Un point de la lame (ligne « line ») touche le cube id.
+     Chaque point de lame dispose, pour ce coup, de WEAPON_DMG × vitesse dégâts ; un cube détruit consomme ses PV
+     et la lame continue avec le reste ; un cube qui tient arrête ce point de lame jusqu'au coup suivant.
+     Renvoie 2 = détruit, 1 = abîmé, -1 = la lame est arrêtée (ça pousse). */
+  hitVoxel(id, line, speed, point, vel) {
+    const mat = this.matOf(id);
+    if (mat.core && this.kind.shell && !this.exposed(id)) return -1;      // la carapace protège encore
+    if (lineSwing[line] !== swingId) { lineSwing[line] = swingId; lineBudget[line] = WEAPON_DMG * speedMult(speed); }
+    if (lineBudget[line] <= 0) return -1;
+    if (this.vSwing[id] === swingId) { lineBudget[line] = 0; return -1; } // déjà touché pendant ce coup, il tient : bloque
+    this.vSwing[id] = swingId;
+    const before = this.vhp[id], dealt = Math.min(before, lineBudget[line]);
+    lineBudget[line] -= before; this.vhp[id] -= dealt;
+    this.mat.emissiveIntensity = Math.max(this.mat.emissiveIntensity, 0.35); this.pendingDetach = true; this.onAttacked();
+    const crit = !!mat.weak;
+    if (this.vhp[id] > 0) {                                                // abîmé, il tient
+      if (mat.regen) this.damaged.add(id);
+      this.recolor(id); this.addDamage(dealt * (mat.weak || 1), crit, point);
+      if (rnd() < 0.15) { this.voxelWorld(id, _w); spawnParticle(_w.x, _w.y, _w.z, (rnd() - 0.5), rnd() + 0.3, (rnd() - 0.5), this.model.col[id], V * 0.5, 0.4); }
+      if (mat.look === 'pale') playTink();
+      return 1;
     }
-    this.alive[id] = 0; this.aliveCount--; this.setVoxel(id, false);
-    const crit = !!this.model.weak[id];
-    if (this.coreIdx[id] >= 0) this.breakCore(point);
-    else { const dmg = DMG_PER_VOXEL * speedMult(speed) * (crit ? WEAK_MULT : 1) * (sh && this.shell[id] ? sh.dmg : 1); this.dmgTaken[id] = dmg; this.addDamage(dmg, crit, point); }
-    this.voxelWorld(id, _w);
-    const c = this.model.col[id];
-    for (let n = 0; n < 2; n++)
-      spawnParticle(_w.x, _w.y, _w.z, vel.x * 0.25 + (rnd() - 0.5) * 1.4, vel.y * 0.25 + rnd() * 1.6 + 0.4, vel.z * 0.25 + (rnd() - 0.5) * 1.4, c, V * (0.45 + rnd() * 0.3), 0.6 + rnd() * 0.6);
-    this.mat.emissiveIntensity = 0.55; this.pendingDetach = true; this.onAttacked();
-    return true;
+    // détruit
+    this.damaged.delete(id);
+    if (mat.tunnel) this.markTunnel(id);
+    this.alive[id] = 0; this.aliveCount--; this.setVoxel(id);
+    if (mat.core) this.breakCore(point); else this.addDamage(dealt * (mat.weak || 1), crit, point);
+    if (rnd() < 0.6) {
+      this.voxelWorld(id, _w);
+      spawnParticle(_w.x, _w.y, _w.z, vel.x * 0.25 + (rnd() - 0.5) * 1.4, vel.y * 0.25 + rnd() * 1.6 + 0.4, vel.z * 0.25 + (rnd() - 0.5) * 1.4, this.model.col[id], V * (0.8 + rnd() * 0.5), 0.6 + rnd() * 0.6);
+    }
+    return 2;
   }
   // empêche la repousse dans un tunnel allant de ce voxel de carapace vers l'extérieur
   markTunnel(id) {
     const m = this.model;
     let x = m.vi[id] - m.cx - this.cxz[0], y = m.vj[id] - this.cy, z = m.vk[id] - m.cz - this.cxz[1];
     const l = Math.hypot(x, y, z) || 1; const dx = x / l, dy = y / l, dz = z / l;
-    for (let s = 0; s <= 14; s += 0.5) {
+    for (let s = 0; s <= 30; s += 0.5) {
       const px = m.vi[id] + dx * s, py = m.vj[id] + dy * s, pz = m.vk[id] + dz * s;
-      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+      for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) for (let c = -2; c <= 2; c++) {
         const i = Math.round(px) + a, j = Math.round(py) + b, k = Math.round(pz) + c;
         if (i < 0 || j < 0 || k < 0 || i >= m.nx || j >= m.ny || k >= m.nz) continue;
-        if ((i - px) ** 2 + (j - py) ** 2 + (k - pz) ** 2 > 1.3) continue;
+        if ((i - px) ** 2 + (j - py) ** 2 + (k - pz) ** 2 > 5) continue;
         const o = m.grid[i + m.nx * (j + m.ny * k)];
         if (o >= 0 && !this.shell[o] && this.coreIdx[o] < 0) this.noRegrow[o] = 1;
       }
     }
   }
-  // repousse d'un voxel extérieur, au plus près du centre, contre un voxel vivant
-  regrowOne() {
-    const m = this.model; let best = -1, bd = 1e9;
+  // régénération : soigne les cubes abîmés et fait repousser les plus proches du centre
+  regenTick(rg) {
+    const healAmt = rg.heal * rg.interval;
+    for (const i of this.damaged) {
+      if (!this.alive[i]) { this.damaged.delete(i); continue; }
+      const h = Math.min(healAmt, this.vmax[i] - this.vhp[i]);
+      this.vhp[i] += h; this.hp = Math.min(this.maxHp, this.hp + h * (this.matOf(i).weak || 1)); this.recolor(i);
+      if (this.vhp[i] >= this.vmax[i]) this.damaged.delete(i);
+    }
+    const m = this.model, K = rg.perTick, best = [], bd = [];
     for (let i = 0; i < m.count; i++) {
-      if (this.alive[i] || this.shell[i] || this.coreIdx[i] >= 0 || this.noRegrow[i] || this.d2[i] >= bd) continue;
+      if (this.alive[i] || this.noRegrow[i] || !this.matOf(i).regen) continue;
+      if (best.length === K && this.d2[i] >= bd[K - 1]) continue;
       const a = m.vi[i], b = m.vj[i], c = m.vk[i]; let touch = false;
       for (const [p, q, r] of NB6) {
         const x = a + p, y = b + q, z = c + r;
         if (x < 0 || y < 0 || z < 0 || x >= m.nx || y >= m.ny || z >= m.nz) continue;
         const o = m.grid[x + m.nx * (y + m.ny * z)]; if (o >= 0 && this.alive[o]) { touch = true; break; }
       }
-      if (touch) { best = i; bd = this.d2[i]; }
+      if (!touch) continue;
+      let k = best.length; while (k > 0 && bd[k - 1] > this.d2[i]) k--;
+      best.splice(k, 0, i); bd.splice(k, 0, this.d2[i]); if (best.length > K) { best.pop(); bd.pop(); }
     }
-    if (best < 0) return;
-    this.alive[best] = 1; this.aliveCount++; this.setVoxel(best, true);
-    this.hp = Math.min(this.maxHp, this.hp + (this.dmgTaken[best] || DMG_PER_VOXEL)); this.dmgTaken[best] = 0;
+    for (const i of best) {
+      this.alive[i] = 1; this.aliveCount++; this.vhp[i] = this.vmax[i]; this.setVoxel(i);
+      this.hp = Math.min(this.maxHp, this.hp + this.vmax[i] * (this.matOf(i).weak || 1));
+    }
   }
   endAttack() { const A = this.kind.attack; this.atk = null; this.atkCd = A.cooldown[0] + rnd() * (A.cooldown[1] - A.cooldown[0]); }
   // attaques : toujours annoncées (préparation visible), parables avec n'importe quelle partie de l'épée
@@ -867,32 +943,34 @@ class Monster {
         if (o >= 0 && alive[o] && !seen[o]) { seen[o] = 1; stack.push(o); }
       }
     }
-    let det = 0;
+    let det = 0, detHp = 0; const detList = [];
     for (let i = 0; i < n; i++) if (alive[i] && !seen[i]) {
-      alive[i] = 0; this.aliveCount--; this.setVoxel(i, false); det++;
+      detList.push(i);
+      alive[i] = 0; this.aliveCount--; det++; detHp += this.vhp[i] * (this.matOf(i).weak || 1); this.damaged.delete(i);
       if (this.coreIdx[i] >= 0) this.coreBroken = true;
-      this.voxelWorld(i, _w);
-      spawnParticle(_w.x, _w.y, _w.z, (rnd() - 0.5) * 0.8, rnd() * 0.6, (rnd() - 0.5) * 0.8, m.col[i], V * 0.85, 0.8 + rnd() * 0.7);
+      if (rnd() < 0.35) { this.voxelWorld(i, _w); spawnParticle(_w.x, _w.y, _w.z, (rnd() - 0.5) * 0.8, rnd() * 0.6, (rnd() - 0.5) * 0.8, m.col[i], V * 1.2, 0.8 + rnd() * 0.7); }
     }
+    for (const i of detList) this.setVoxel(i);
     if (det && this.coreBroken) { this.voxelWorld(0, _w); _w.y = this.group.position.y + m.height * 0.6; this.addDamage(Math.max(0, this.hp), true, _w); this.hp = 0; playHit(2); }
     else if (det) {
       this.voxelWorld(0, _w); _w.y = this.group.position.y + m.height * 0.8;
-      this.addDamage(det * DMG_PER_VOXEL, false, _w); playHit(1.5);
+      this.addDamage(detHp, false, _w); playHit(1.5);
     }
   }
   kill() {
     this.state = 'dead'; this.timer = this.kind.behavior === 'approach' ? 2.5 : 4; kills++; drawSign();
     const cx = this.group.position.x, cy = this.group.position.y + this.model.height / 2, cz = this.group.position.z;
-    for (let i = 0; i < this.model.count; i++) if (this.alive[i]) {
+    const pk = Math.min(1, 700 / Math.max(1, this.aliveCount));
+    for (let i = 0; i < this.model.count; i++) if (this.alive[i] && rnd() < pk) {
       this.voxelWorld(i, _w);
       _v.set(_w.x - cx, _w.y - cy, _w.z - cz).normalize();
       // pas de cubes projetés vers le visage du joueur
       const tp = _sv.set(playerPos.x - cx, 0, playerPos.z - cz).normalize(), dp = _v.dot(tp);
       if (dp > 0) _v.addScaledVector(tp, -1.6 * dp);
       _v.multiplyScalar(1.0 + rnd() * 1.8);
-      spawnParticle(_w.x, _w.y, _w.z, _v.x, _v.y + 1.5, _v.z, this.model.col[i], V * (0.7 + rnd() * 0.3), 0.9 + rnd() * 0.8);
-      this.alive[i] = 0;
+      spawnParticle(_w.x, _w.y, _w.z, _v.x, _v.y + 1.5, _v.z, this.model.col[i], 0.05 + rnd() * 0.03, 0.9 + rnd() * 0.8);
     }
+    this.alive.fill(0);
     this.group.visible = false; this.engagedUntil = -1;
     if (this.num) { this.num.release(this.coreBroken ? 'core' : true); this.num = null; }
     playDeath(); haptic(1, 120);
@@ -959,7 +1037,7 @@ class Monster {
     const rg = this.kind.regen;
     if (rg && this.state === 'alive' && time - this.lastHit > rg.delay && this.hp > 0) {
       this.regenTimer += dt;
-      while (this.regenTimer >= rg.interval) { this.regenTimer -= rg.interval; this.regrowOne(); }
+      while (this.regenTimer >= rg.interval) { this.regenTimer -= rg.interval; this.regenTick(rg); }
     } else this.regenTimer = 0;
     this.mat.emissiveIntensity *= Math.exp(-dt * 14);
     if (!this.atk && this.mat.emissiveIntensity < 0.02) this.mat.emissive.setHex(0xffffff);
@@ -972,7 +1050,8 @@ class Monster {
     this.plate.update(dt, this, time < this.engagedUntil, g.position.y + this.model.height * g.scale.y);
   }
 }
-const monsters = [new Monster(SLIME, -0.5), new Monster(MUSHROOM, 0.5), new Monster(RABBIT, null), new Monster(VILLAGER, null)];
+// test en cours : seul le slime est actif (les autres créatures sont gardées dans le code)
+const monsters = [new Monster(SLIME, 0)];
 
 /* ================= Épée ================= */
 const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdfe7ef, metalness: 0.5, roughness: 0.3, emissive: 0x112233 });
@@ -992,6 +1071,7 @@ const sword = new THREE.Group();
   }
 }
 let swingId = 1;
+const lineSwing = new Int32Array(256), lineBudget = new Float32Array(256); // réserve de dégâts de chaque point de lame pour le coup en cours
 const swordA = new V3(), swordB = new V3(), _sq = new V3();
 // distance d'un point à toute l'épée (pommeau → pointe)
 function swordNear(p, r) {
@@ -1091,7 +1171,11 @@ function sweep(b0, t0, b1, t1) {
         if (id < 0) continue;
         _sv.lerpVectors(baseVel, tipVel, g);
         const c = sampleCut(_sv);
-        if (c.cut) { if (!m.cutVoxel(id, c.speed, _p, _sv)) continue; cutVel.add(_sv); hits++; intensity = Math.max(intensity, speedMult(c.speed)); }
+        if (c.cut) {
+          const r = m.hitVoxel(id, a, c.speed, _p, _sv);
+          if (r < 0) { pushVel.add(_sv); pushPt.add(_p); pushN++; continue; } // la lame est arrêtée : elle pousse
+          cutVel.add(_sv); hits++; intensity = Math.max(intensity, speedMult(c.speed));
+        }
         else { pushVel.add(_sv); pushPt.add(_p); pushN++; }
       }
     }
