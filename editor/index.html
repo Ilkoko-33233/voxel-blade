@@ -9,6 +9,8 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:13px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
   button,select,input{font:inherit;color:inherit}
+  [hidden]{display:none!important}
+  header button{white-space:nowrap}
   button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 9px;cursor:pointer}
   button:hover{border-color:#4a5568}
   button.on{background:#2b4a33;border-color:var(--acc);color:#d6ffd9}
@@ -63,6 +65,22 @@
   .small{font-size:11.5px;color:var(--mut)}
   .swatchrow{display:flex;gap:6px;align-items:center}
   input[type=color]{width:42px;height:28px;border:1px solid var(--line);border-radius:6px;background:#0f1218;padding:2px}
+  .tabs{display:flex;gap:2px;margin-right:4px}
+  .tabs button{border-radius:6px}
+  #sheetPane{overflow:auto;padding:12px 16px;background:var(--bg)}
+  #sheetPane section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+  #sheetPane h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}
+  #sheetPane .f{display:grid;grid-template-columns:170px 1fr;gap:6px 10px;align-items:center;margin:6px 0}
+  #sheetPane .f label{color:var(--mut)}
+  #sheetPane .f .u{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  #sheetPane textarea{width:100%;min-height:54px;background:#0f1218;border:1px solid var(--line);border-radius:6px;color:var(--txt);padding:6px;font:inherit;resize:vertical}
+  #sheetPane input[type=number]{width:74px}
+  .atk{border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;background:var(--panel2)}
+  .atk .hd{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .tree{max-height:60vh;overflow:auto;min-width:380px}
+  .tree .cat{color:var(--mut);margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+  .tree .cr{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin:3px 0;cursor:pointer;background:var(--panel2)}
+  .tree .cr:hover{border-color:var(--acc)}
   .texprev{width:28px;height:28px;border:1px solid var(--line);border-radius:4px;image-rendering:pixelated}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
@@ -70,16 +88,18 @@
 <body>
 <div id="app">
   <header>
-    <span class="title">VOXEL BLADE · ÉDITEUR</span>
+    <span class="title">VOXEL BLADE</span>
+    <span class="tabs"><button id="tabModel" class="on">Modèle</button><button id="tabSheet">Fiche</button></span>
     <input id="cName" type="text" value="Nouvelle créature" title="Nom de la créature">
     <span class="sep"></span>
     <button id="bNew">Nouveau</button>
-    <button id="bOpen">Ouvrir…</button>
-    <button id="bSave">Enregistrer</button>
-    <button id="bSend" class="primary">Envoyer sur GitHub</button>
+    <button id="bOpenGit" title="Ouvrir une créature du dépôt">Ouvrir ▸ GitHub</button>
+    <button id="bOpen" title="Ouvrir un fichier .json">Ouvrir ▸ fichier</button>
+    <button id="bSave" title="Télécharger le fichier .json (Ctrl+S)">Enregistrer</button>
+    <button id="bSend" class="primary">Envoyer ▸ GitHub</button>
     <span class="sep"></span>
-    <button id="bUndo" title="Ctrl+Z">⟲ Annuler</button>
-    <button id="bRedo" title="Ctrl+Y">⟳ Rétablir</button>
+    <button id="bUndo" title="Annuler (Ctrl+Z)">⟲</button>
+    <button id="bRedo" title="Rétablir (Ctrl+Y)">⟳</button>
     <span class="sep"></span>
     <span class="small">Symétrie</span>
     <button id="symX">X</button><button id="symY">Y</button><button id="symZ">Z</button>
@@ -123,6 +143,7 @@
       </div>
       <div id="sliceWrap"><canvas id="slice"></canvas><div class="hint" id="hintSlice">[ et ] : changer de couche · la couche en dessous apparaît en transparence</div></div>
     </div>
+    <div id="sheetPane" hidden></div>
   </div>
 
   <aside id="right">
@@ -172,11 +193,15 @@
   <h2>Envoyer sur GitHub</h2>
   <div class="row"><label>Dépôt</label><input id="gOwner" type="text" placeholder="propriétaire" style="width:120px"> / <input id="gRepo" type="text" placeholder="dépôt" style="width:110px"></div>
   <div class="row"><label>Branche</label><input id="gBranch" type="text" value="main" style="flex:1"></div>
-  <div class="row"><label>Dossier</label><input id="gFolder" type="text" value="creatures" style="flex:1"></div>
   <div class="row"><label>Jeton</label><input id="gToken" type="password" placeholder="github_pat_…" style="flex:1"></div>
   <p class="small">Jeton GitHub à accès limité à ce dépôt (droit « Contents : Read and write »). Il reste enregistré dans ce navigateur uniquement.</p>
   <p class="small" id="gPath"></p>
   <div class="actions"><button id="gCancel">Annuler</button><button id="gOk" class="primary">Envoyer</button></div>
+</dialog>
+<dialog id="dlgOpen">
+  <h2>Ouvrir une créature du dépôt</h2>
+  <div class="tree" id="openTree">Chargement…</div>
+  <div class="actions"><button id="oCancel">Fermer</button></div>
 </dialog>
 <div id="toast"></div>
 
@@ -184,7 +209,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial } from '../shared/look.js';
+import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial, RANKS, MOVE_STYLES, BEHAVIORS, ATTACK_TYPES, defaultAttack, defaultSheet, completeSheet } from '../shared/look.js';
 
 /* ============ Catalogues (types de cubes, textures, lumières : voir shared/look.js) ============ */
 const PART_TINTS = ['#ff6b6b', '#4dabf7', '#ffd43b', '#69db7c', '#da77f2', '#ffa94d', '#3bc9db', '#f783ac'];
@@ -207,7 +232,8 @@ function alloc(nx, ny, nz) {
 function newProject(name, nx, ny, nz) {
   let presets = []; try { presets = JSON.parse(lsGet(LS.presets) || '[]'); } catch (e) { }
   if (!presets.length) presets = defaultPresets();
-  P = { name, nx, ny, nz, presets, parts: [{ name: 'Corps', parent: -1, pivot: [Math.floor(nx / 2), 0, Math.floor(nz / 2)], visible: true }] };
+  P = { name, nx, ny, nz, presets, parts: [{ name: 'Corps', parent: -1, pivot: [Math.floor(nx / 2), 0, Math.floor(nz / 2)], visible: true }],
+    id: null, folder: 'monstres', sheet: defaultSheet() };
   alloc(nx, ny, nz); history.length = 0; future.length = 0;
 }
 function defaultPresets() {
@@ -309,7 +335,9 @@ function shape3D(type, c, d, mode) {
 
 /* ============ Exemple : le slime du jeu ============ */
 function buildSlimeExample() {
-  newProject('Slime', 29, 24, 29); P.parts[0].pivot = [14, 0, 14];
+  newProject('Slime', 29, 24, 29); P.parts[0].pivot = [14, 0, 14]; P.id = 'slime'; P.folder = 'monstres/gelees';
+  P.sheet = completeSheet({ rank: 'monster', level: 1, hp: 4500, description: 'Masse de gelée qui se régénère. Une carapace protège son noyau.', move: { speed: 1.1, style: 'hop' },
+    behavior: { mode: 'approach', keepMin: 1.0, keepMax: 1.4, aggro: 8 }, attacks: [defaultAttack('leap')], regen: { enabled: true, delay: 2, cubesPerSec: 20, healPerSec: 10 }, spawn: { test: true, respawn: 2.5 } });
   const hex = h => parseInt(h.slice(1), 16), M = id => MATS.findIndex(m => m.id === id), T = id => TEXTURES.findIndex(t => t.id === id), L = id => LIGHTS.findIndex(l => l.id === id);
   const c0 = new THREE.Color(0x34a048), c1 = new THREE.Color(0x9cf08a), tmp = new THREE.Color();
   for (let z = 0; z < 29; z++) for (let y = 0; y < 24; y++) for (let x = 0; x < 29; x++) {
@@ -725,7 +753,7 @@ function serialize() {
   });
   let bin = ''; for (let k = 0; k < buf.length; k += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(k, k + 0x8000));
   return {
-    format: 'voxelblade-creature', version: 1, name: P.name, voxelSize: 0.04, size: [P.nx, P.ny, P.nz],
+    format: 'voxelblade-creature', version: 1, id: P.id, name: P.name, folder: P.folder, sheet: P.sheet, voxelSize: 0.04, size: [P.nx, P.ny, P.nz],
     textures: TEXTURES.map(t => t.id), materials: MATS.map(m => m.id), lights: LIGHTS.map(l => l.id),
     presets: P.presets, parts: P.parts.map(p => ({ name: p.name, parent: p.parent, pivot: p.pivot, visible: p.visible })),
     voxelLayout: 'x,y,z,r,g,b,texture,material,light,part (10 octets par cube)', voxelCount: list.length, voxels: btoa(bin),
@@ -735,6 +763,7 @@ function deserialize(d) {
   if (!d || d.format !== 'voxelblade-creature') throw new Error('Ce fichier n\'est pas une créature Voxel Blade');
   const [nx, ny, nz] = d.size; newProject(d.name || 'Créature', nx, ny, nz);
   P.presets = Array.isArray(d.presets) && d.presets.length ? d.presets : P.presets;
+  P.id = d.id || null; P.folder = d.folder || 'monstres'; P.sheet = completeSheet(d.sheet);
   P.parts = (d.parts && d.parts.length ? d.parts : P.parts).map(p => ({ name: p.name, parent: p.parent ?? -1, pivot: p.pivot || [0, 0, 0], visible: p.visible !== false }));
   const mapT = (d.textures || []).map(id => byId(TEXTURES, id)), mapM = (d.materials || []).map(id => byId(MATS, id)), mapL = (d.lights || []).map(id => byId(LIGHTS, id));
   const bin = atob(d.voxels || '');
@@ -760,10 +789,10 @@ $('fileIn').onchange = async e => {
   try { deserialize(JSON.parse(await f.text())); afterLoad(); toast('« ' + P.name + ' » ouverte'); } catch (err) { toast('Impossible d\'ouvrir : ' + err.message); }
   e.target.value = '';
 };
-$('cName').onchange = () => { P.name = $('cName').value; markDirty(); };
+$('cName').onchange = () => { P.name = $('cName').value; markDirty(); renderSheet(); };
 function afterLoad() {
   activePart = 0; $('cName').value = P.name; slice.layer = Math.min(slice.layer, sliceMax());
-  rebuildHelpers(); rebuildPivots(); syncSliceUI(); renderParts(); renderPresets(); frameCamera(); markDirty(); dirtyStats = true;
+  rebuildHelpers(); rebuildPivots(); syncSliceUI(); renderParts(); renderPresets(); frameCamera(); markDirty(); dirtyStats = true; renderSheet();
 }
 // nouveau
 $('bNew').onclick = () => $('dlgNew').showModal();
@@ -781,39 +810,200 @@ $('sOk').onclick = () => { shape3D($('sType').value, [+$('sCx').value + 0.5, +$(
 $('bFillInside').onclick = () => { fillInside(); markDirty(true); };
 $('bUndo').onclick = undo; $('bRedo').onclick = redo;
 
-/* ============ Envoi sur GitHub ============ */
+/* ============ GitHub : envoi, index des créatures, ouverture ============ */
 function gitCfg() { try { return JSON.parse(lsGet(LS.git) || '{}'); } catch (e) { return {}; } }
+const b64ToUtf8 = b => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, '')), c => c.charCodeAt(0)));
+const utf8ToB64 = str => { const bytes = new TextEncoder().encode(str); let bin = ''; for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000)); return btoa(bin); };
+function apiUrl(c, path) { return `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`; }
+const apiHeaders = c => ({ Authorization: 'Bearer ' + c.token, Accept: 'application/vnd.github+json' });
+async function ghGet(path) { // { json, sha } ou null si absent ; sans jeton : lecture via la page publiée
+  const c = gitCfg();
+  if (c.token && c.owner && c.repo) {
+    const r = await fetch(apiUrl(c, path) + '?ref=' + encodeURIComponent(c.branch || 'main'), { headers: apiHeaders(c), cache: 'no-store' });
+    if (r.status === 404) return null; if (!r.ok) throw new Error(await errText(r));
+    const j = await r.json(); return { sha: j.sha, json: JSON.parse(b64ToUtf8(j.content)) };
+  }
+  const r = await fetch('../' + path + '?v=' + Date.now()); if (!r.ok) return null; return { json: await r.json() };
+}
+async function ghPut(c, path, obj, sha, message) {
+  const r = await fetch(apiUrl(c, path), { method: 'PUT', headers: apiHeaders(c), body: JSON.stringify({ message, content: utf8ToB64(JSON.stringify(obj, null, path.endsWith('index.json') ? 1 : 0)), branch: c.branch || 'main', ...(sha ? { sha } : {}) }) });
+  if (!r.ok) throw new Error(await errText(r));
+}
+async function ghDelete(c, path, sha, message) {
+  const r = await fetch(apiUrl(c, path), { method: 'DELETE', headers: apiHeaders(c), body: JSON.stringify({ message, sha, branch: c.branch || 'main' }) });
+  if (!r.ok && r.status !== 404) throw new Error(await errText(r));
+}
+// index des créatures (catégories + liste), gardé en mémoire
+let catalog = { format: 'voxelblade-index', version: 1, categories: { monstres: 'Monstres' }, creatures: [] };
+async function loadCatalog() {
+  try { const g = await ghGet('creatures/index.json'); if (g && g.json && g.json.categories) catalog = g.json; } catch (e) { }
+  renderSheet();
+}
+const creaturePath = () => (P.folder ? P.folder + '/' : '') + slug(P.name) + '.json';
 $('bSend').onclick = () => {
-  const c = gitCfg(); $('gOwner').value = c.owner || 'Ilkoko-33233'; $('gRepo').value = c.repo || 'voxel-blade'; $('gBranch').value = c.branch || 'main'; $('gFolder').value = c.folder || 'creatures'; $('gToken').value = c.token || '';
-  const upd = () => $('gPath').textContent = 'Fichier : ' + ($('gFolder').value.replace(/\/+$/, '') + '/' + slug($('cName').value) + '.json');
-  ['gFolder'].forEach(id => $(id).oninput = upd); upd(); $('dlgGit').showModal();
+  const c = gitCfg(); $('gOwner').value = c.owner || 'Ilkoko-33233'; $('gRepo').value = c.repo || 'voxel-blade'; $('gBranch').value = c.branch || 'main'; $('gToken').value = c.token || '';
+  P.name = $('cName').value.trim() || 'Créature';
+  $('gPath').textContent = 'Fichier : creatures/' + creaturePath() + ' · catégorie : ' + catLabel(P.folder) + ' (modifiable dans l\'onglet Fiche)';
+  $('dlgGit').showModal();
 };
 $('gCancel').onclick = () => $('dlgGit').close();
 $('gOk').onclick = async () => {
-  const c = { owner: $('gOwner').value.trim(), repo: $('gRepo').value.trim(), branch: $('gBranch').value.trim() || 'main', folder: $('gFolder').value.trim().replace(/^\/+|\/+$/g, ''), token: $('gToken').value.trim() };
+  const c = { owner: $('gOwner').value.trim(), repo: $('gRepo').value.trim(), branch: $('gBranch').value.trim() || 'main', token: $('gToken').value.trim() };
   if (!c.owner || !c.repo || !c.token) { toast('Renseigne le dépôt et le jeton'); return; }
   lsSet(LS.git, JSON.stringify(c));
   P.name = $('cName').value.trim() || 'Créature';
-  const path = (c.folder ? c.folder + '/' : '') + slug(P.name) + '.json';
-  const api = `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
-  const headers = { Authorization: 'Bearer ' + c.token, Accept: 'application/vnd.github+json' };
+  if (!P.id) P.id = slug(P.name) + '-' + Math.random().toString(36).slice(2, 6);
+  const rel = creaturePath(), path = 'creatures/' + rel;
   $('gOk').disabled = true; $('gOk').textContent = 'Envoi…';
   try {
-    let sha; const g = await fetch(api + '?ref=' + encodeURIComponent(c.branch), { headers });
-    if (g.ok) sha = (await g.json()).sha; else if (g.status !== 404) throw new Error(await errText(g));
-    const json = JSON.stringify(serialize(), null, 0), bytes = new TextEncoder().encode(json);
-    let bin = ''; for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
-    const r = await fetch(api, { method: 'PUT', headers, body: JSON.stringify({ message: (sha ? 'Mise à jour' : 'Ajout') + ' de la créature « ' + P.name + ' » (éditeur)', content: btoa(bin), branch: c.branch, ...(sha ? { sha } : {}) }) });
-    if (!r.ok) throw new Error(await errText(r));
-    $('dlgGit').close(); autosave(); toast('Envoyé sur GitHub : ' + path);
+    // 1. la créature
+    const cur = await ghGet(path);
+    await ghPut(c, path, serialize(), cur && cur.sha, (cur ? 'Mise à jour' : 'Ajout') + ' de la créature « ' + P.name + ' » (éditeur)');
+    // 2. l'index : catégories + entrée de la créature (et suppression de l'ancien fichier si elle a été renommée ou déplacée)
+    const ig = await ghGet('creatures/index.json'), idx = (ig && ig.json && ig.json.categories) ? ig.json : { format: 'voxelblade-index', version: 1, categories: {}, creatures: [] };
+    Object.assign(idx.categories, catalog.categories);
+    const segs = P.folder ? P.folder.split('/') : []; segs.forEach((_, k) => { const pth = segs.slice(0, k + 1).join('/'); if (!idx.categories[pth]) idx.categories[pth] = segs[k]; });
+    const old = idx.creatures.find(e => e.id === P.id);
+    if (old && old.path !== rel) { const o = await ghGet('creatures/' + old.path); if (o && o.sha) await ghDelete(c, 'creatures/' + old.path, o.sha, 'Déplacement de la créature « ' + P.name + ' » (éditeur)'); }
+    idx.creatures = idx.creatures.filter(e => e.id !== P.id && e.path !== rel);
+    idx.creatures.push({ id: P.id, name: P.name, path: rel, rank: P.sheet.rank, level: P.sheet.level, spawnTest: !!P.sheet.spawn.test });
+    idx.creatures.sort((a, b) => a.path.localeCompare(b.path));
+    await ghPut(c, 'creatures/index.json', idx, ig && ig.sha, 'Index des créatures : « ' + P.name + ' » (éditeur)');
+    catalog = idx; $('dlgGit').close(); autosave(); toast('Envoyé sur GitHub : ' + path);
   } catch (err) { toast('Échec de l\'envoi : ' + err.message); }
   $('gOk').disabled = false; $('gOk').textContent = 'Envoyer';
 };
 async function errText(r) {
   let m = ''; try { m = (await r.json()).message || ''; } catch (e) { }
   if (r.status === 401) return 'jeton refusé (401)'; if (r.status === 403) return 'accès refusé (403) : vérifie les droits du jeton'; if (r.status === 404) return 'dépôt introuvable (404)';
+  if (r.status === 409) return 'conflit (409) : réessaie dans quelques secondes';
   return r.status + ' ' + m;
 }
+// ouvrir depuis le dépôt
+$('bOpenGit').onclick = async () => {
+  $('dlgOpen').showModal(); $('openTree').textContent = 'Chargement…';
+  await loadCatalog();
+  const t = $('openTree'); t.innerHTML = '';
+  if (!catalog.creatures.length) { t.textContent = 'Aucune créature dans le dépôt pour l\'instant.'; return; }
+  const byFolder = {}; catalog.creatures.forEach(e => { const f = e.path.split('/').slice(0, -1).join('/'); (byFolder[f] = byFolder[f] || []).push(e); });
+  Object.keys(byFolder).sort().forEach(f => {
+    const h = document.createElement('div'); h.className = 'cat'; h.textContent = catLabel(f) || 'Sans catégorie'; t.append(h);
+    byFolder[f].forEach(e => {
+      const d = document.createElement('div'); d.className = 'cr';
+      d.innerHTML = `<span>${escapeHtml(e.name)}</span><span class="small">${(RANKS.find(r => r.id === e.rank) || {}).name || ''} · niv. ${e.level ?? '?'}</span>`;
+      d.onclick = async () => {
+        try { const g = await ghGet('creatures/' + e.path); if (!g) throw new Error('fichier introuvable'); deserialize(g.json); afterLoad(); $('dlgOpen').close(); toast('« ' + P.name + ' » ouverte depuis GitHub'); }
+        catch (err) { toast('Impossible d\'ouvrir : ' + err.message); }
+      };
+      t.append(d);
+    });
+  });
+};
+$('oCancel').onclick = () => $('dlgOpen').close();
+
+/* ============ Onglets ============ */
+function setTab(t) {
+  $('tabModel').classList.toggle('on', t === 'model'); $('tabSheet').classList.toggle('on', t === 'sheet');
+  $('slicePane').hidden = t !== 'model'; $('sheetPane').hidden = t !== 'sheet';
+  if (t === 'sheet') renderSheet(); resize();
+}
+$('tabModel').onclick = () => setTab('model'); $('tabSheet').onclick = () => setTab('sheet');
+
+/* ============ Fiche de la créature ============ */
+function catLabel(path) {
+  if (!path) return '';
+  const segs = path.split('/'); return segs.map((_, k) => catalog.categories[segs.slice(0, k + 1).join('/')] || segs[k]).join(' › ');
+}
+const getK = (o, k) => k.split('.').reduce((a, b) => a && a[b], o);
+const setK = (o, k, v) => { const ks = k.split('.'), last = ks.pop(); ks.reduce((a, b) => a[b], o)[last] = v; };
+const opts = (list, cur) => list.map(o => `<option value="${o.id}" ${o.id === cur ? 'selected' : ''}>${o.name}</option>`).join('');
+function num(k, unit = '', step = 'any', min = 0) { return `<span class="u"><input type="number" data-k="${k}" data-t="n" step="${step}" min="${min}" value="${getK(P.sheet, k) ?? ''}">${unit ? '<span class="small">' + unit + '</span>' : ''}</span>`; }
+function renderSheet() {
+  const el = $('sheetPane'); if (!el || el.hidden || !P) return;
+  const S = P.sheet, cats = { ...catalog.categories }; if (P.folder && !cats[P.folder]) cats[P.folder] = P.folder.split('/').pop();
+  const catOpts = Object.keys(cats).sort().map(k => `<option value="${k}" ${k === P.folder ? 'selected' : ''}>${escapeHtml(catLabel(k))}</option>`).join('');
+  const autoXp = Math.max(1, Math.round(12 * (+S.level || 1)));
+  el.innerHTML = `
+  <section><h4>Identité</h4>
+    <div class="f"><label>Nom</label><input type="text" id="shName" value="${escapeHtml(P.name)}"></div>
+    <div class="f"><label>Rang</label><select data-k="rank">${opts(RANKS, S.rank)}</select></div>
+    ${S.rank === 'npc' ? `<div class="f"><label>Rôle (PNJ)</label><input type="text" data-k="role" value="${escapeHtml(S.role || '')}" placeholder="Marchand, forgeron…"></div>` : ''}
+    <div class="f"><label>Niveau</label>${num('level', '', 1, 1)}</div>
+    <div class="f"><label>PV de la créature</label><span class="u">${num('hp', 'PV', 1, 1)}<span class="small">(PV totaux de ses cubes : ${totalCubeHp().toLocaleString('fr-FR')})</span></span></div>
+    <div class="f"><label>XP donnée</label><span class="u"><input type="number" data-k="xp" data-t="nx" min="0" step="1" value="${S.xp ?? ''}" placeholder="auto"><span class="small">vide = automatique (≈ ${autoXp} XP à niveau égal)</span></span></div>
+    <div class="f"><label>Description</label><textarea data-k="description" placeholder="Qui est-elle, où vit-elle…">${escapeHtml(S.description || '')}</textarea></div>
+  </section>
+  <section><h4>Rangement</h4>
+    <div class="f"><label>Catégorie</label><select id="shFolder">${catOpts}</select></div>
+    <div class="f"><label></label><span class="u"><button id="shAddCat">+ Catégorie</button><button id="shAddSub">+ Sous-catégorie de « ${escapeHtml(catLabel(P.folder) || '—')} »</button></span></div>
+    <p class="small">Fichier : creatures/${escapeHtml(creaturePath())}. Les nouvelles catégories sont enregistrées dans le dépôt au prochain envoi.</p>
+  </section>
+  <section><h4>Déplacement</h4>
+    <div class="f"><label>Vitesse</label>${num('move.speed', 'm/s', 0.1)}</div>
+    <div class="f"><label>Style</label><select data-k="move.style">${opts(MOVE_STYLES, S.move.style)}</select></div>
+  </section>
+  <section><h4>Comportement</h4>
+    <div class="f"><label>Mode</label><select data-k="behavior.mode">${opts(BEHAVIORS, S.behavior.mode)}</select></div>
+    ${S.behavior.mode === 'approach' ? `<div class="f"><label>Distance à garder avec sa cible</label><span class="u">entre ${num('behavior.keepMin', '', 0.1)} et ${num('behavior.keepMax', 'm', 0.1)}</span></div>
+    <div class="f"><label>Distance de détection</label>${num('behavior.aggro', 'm', 0.5)}</div>` : ''}
+    <div class="f"><label>Fuit quand on l'attaque</label><span class="u"><input type="checkbox" data-k="behavior.fleeOnHit" data-t="b" ${S.behavior.fleeOnHit ? 'checked' : ''}></span></div>
+  </section>
+  <section><h4>Attaques</h4><div id="shAtk"></div><button id="shAddAtk">+ Ajouter une attaque</button>
+    <p class="small">Une attaque se déclenche quand la cible est à portée, après sa préparation (visible). S'il y en a plusieurs à portée, l'une est choisie au hasard.</p></section>
+  <section><h4>Capacités</h4>
+    <div class="f"><label>Régénération</label><span class="u"><input type="checkbox" data-k="regen.enabled" data-t="b" ${S.regen.enabled ? 'checked' : ''}> <span class="small">seuls les types de cubes qui se régénèrent repoussent</span></span></div>
+    ${S.regen.enabled ? `<div class="f"><label>Commence après</label>${num('regen.delay', 's sans être touchée', 0.5)}</div>
+    <div class="f"><label>Repousse</label>${num('regen.cubesPerSec', 'cubes / s', 1)}</div>
+    <div class="f"><label>Soin des cubes abîmés</label>${num('regen.healPerSec', 'PV / s par cube', 1)}</div>` : ''}
+  </section>
+  <section><h4>Apparition</h4>
+    <div class="f"><label>Clairière de test</label><span class="u"><input type="checkbox" data-k="spawn.test" data-t="b" ${S.spawn.test ? 'checked' : ''}> <span class="small">apparaît dans la clairière du jeu</span></span></div>
+    <div class="f"><label>Réapparition</label>${num('spawn.respawn', 's après sa mort', 0.5)}</div>
+  </section>`;
+  // liaison des champs
+  el.querySelectorAll('[data-k]').forEach(inp => {
+    const k = inp.dataset.k, t = inp.dataset.t;
+    const apply = () => {
+      let v = t === 'b' ? inp.checked : t === 'n' ? +inp.value : t === 'nx' ? (inp.value === '' ? null : +inp.value) : inp.value;
+      setK(P.sheet, k, v); markDirty();
+      if (['rank', 'behavior.mode', 'regen.enabled', 'level'].includes(k)) renderSheet();
+    };
+    inp.addEventListener(inp.tagName === 'SELECT' || t === 'b' ? 'change' : 'input', apply);
+  });
+  $('shName').onchange = e => { P.name = e.target.value.trim() || 'Créature'; $('cName').value = P.name; markDirty(); renderSheet(); };
+  $('shFolder').onchange = e => { P.folder = e.target.value; markDirty(); renderSheet(); };
+  const addCat = parent => {
+    const label = prompt(parent ? 'Nom de la sous-catégorie de « ' + catLabel(parent) + ' »' : 'Nom de la nouvelle catégorie'); if (!label) return;
+    const path = (parent ? parent + '/' : '') + slug(label);
+    catalog.categories[path] = label.trim(); P.folder = path; markDirty(); renderSheet(); toast('Catégorie « ' + catLabel(path) + ' » créée');
+  };
+  $('shAddCat').onclick = () => addCat(''); $('shAddSub').onclick = () => addCat(P.folder);
+  renderAttacks();
+  $('shAddAtk').onclick = () => { S.attacks.push(defaultAttack('leap')); markDirty(); renderAttacks(); };
+}
+function renderAttacks() {
+  const el = $('shAtk'); el.innerHTML = '';
+  P.sheet.attacks.forEach((a, k) => {
+    const d = document.createElement('div'); d.className = 'atk';
+    const f = (key, label, unit, step = 'any') => `<div class="f"><label>${label}</label><span class="u"><input type="number" data-a="${key}" step="${step}" min="0" value="${a[key] ?? ''}"><span class="small">${unit}</span></span></div>`;
+    d.innerHTML = `<div class="hd"><b>Attaque ${k + 1}</b><select data-a="type">${opts(ATTACK_TYPES, a.type)}</select><span style="flex:1"></span><button data-del>Supprimer</button></div>
+      ${f('dmg', 'Dégâts', 'PV', 1)}${f('range', 'Portée', 'm', 0.1)}${f('windup', 'Préparation (visible)', 's', 0.1)}
+      <div class="f"><label>Délai entre deux attaques</label><span class="u">entre <input type="number" data-a="cooldownMin" step="0.5" min="0" value="${a.cooldownMin}"> et <input type="number" data-a="cooldownMax" step="0.5" min="0" value="${a.cooldownMax}"><span class="small">s</span></span></div>
+      ${a.type === 'leap' ? f('duration', 'Durée du bond', 's', 0.05) : f('speed', 'Vitesse du projectile', 'm/s', 0.1)}`;
+    d.querySelectorAll('[data-a]').forEach(inp => {
+      const key = inp.dataset.a;
+      inp.addEventListener(inp.tagName === 'SELECT' ? 'change' : 'input', () => {
+        if (key === 'type') { P.sheet.attacks[k] = { ...defaultAttack(inp.value), dmg: a.dmg, range: a.range }; renderAttacks(); }
+        else a[key] = +inp.value;
+        markDirty();
+      });
+    });
+    d.querySelector('[data-del]').onclick = () => { P.sheet.attacks.splice(k, 1); markDirty(); renderAttacks(); };
+    el.append(d);
+  });
+  if (!P.sheet.attacks.length) el.innerHTML = '<p class="small">Aucune attaque : la créature ne fait pas de dégâts.</p>';
+}
+function totalCubeHp() { let hp = 0; for (let i = 0; i < occ.length; i++) if (occ[i]) hp += MATS[mat[i]] ? MATS[mat[i]].hp : 0; return hp; }
 
 /* ============ Raccourcis ============ */
 addEventListener('keydown', e => {
@@ -834,7 +1024,7 @@ let toastT; function toast(msg) { const t = $('toast'); t.textContent = msg; t.c
   try { const d = JSON.parse(lsGet(LS.auto) || 'null'); if (d) { deserialize(d); ok = true; } } catch (e) { }
   if (!ok) buildSlimeExample();
   setTool('pencil'); syncBrushUI(); afterLoad(); unsaved = false; $('saveState').textContent = ok ? 'reprise de la dernière session' : '';
-  resize(); requestAnimationFrame(loop);
+  resize(); requestAnimationFrame(loop); loadCatalog();
 })();
 window.__ed = { get P() { return P; }, occ: () => occ, applyAt, beginStroke, endStroke, undo, redo, serialize, deserialize, view, slice, buckets, setTool, fillInside, shape3D, brush, stats: () => stats };
 </script>

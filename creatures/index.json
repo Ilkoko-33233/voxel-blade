@@ -1,0 +1,27 @@
+{
+ "format": "voxelblade-index",
+ "version": 1,
+ "categories": {
+  "monstres": "Monstres",
+  "monstres/gelees": "Gelées",
+  "monstres/champignons": "Champignons"
+ },
+ "creatures": [
+  {
+   "id": "slime",
+   "name": "Slime",
+   "path": "monstres/gelees/slime.json",
+   "rank": "monster",
+   "level": 1,
+   "spawnTest": true
+  },
+  {
+   "id": "pignon",
+   "name": "Pignon",
+   "path": "monstres/champignons/pignon.json",
+   "rank": "monster",
+   "level": 3,
+   "spawnTest": true
+  }
+ ]
+}

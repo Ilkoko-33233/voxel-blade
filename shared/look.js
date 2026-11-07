@@ -91,3 +91,37 @@ export function decodeCreature(d) {
   }
   return { name: d.name, size: d.size, parts: d.parts || [], voxels: out };
 }
+
+/* ===== Fiche de créature (identité, déplacement, comportement, attaques, capacités) ===== */
+export const RANKS = [
+  { id: 'monster', name: 'Monstre' }, { id: 'passive', name: 'Créature passive' }, { id: 'npc', name: 'PNJ' },
+  { id: 'boss', name: 'Boss' }, { id: 'legendary', name: 'Légendaire' },
+];
+export const MOVE_STYLES = [{ id: 'hop', name: 'Sautille' }, { id: 'waddle', name: 'Se dandine' }, { id: 'none', name: 'Glisse' }];
+export const BEHAVIORS = [
+  { id: 'approach', name: 'Va vers sa cible' }, { id: 'wander', name: 'Se promène' }, { id: 'idle', name: 'Reste à son poste' },
+];
+export const ATTACK_TYPES = [{ id: 'leap', name: 'Bond' }, { id: 'projectile', name: 'Projectile' }];
+export function defaultAttack(type = 'leap') {
+  return type === 'leap'
+    ? { type: 'leap', dmg: 12, range: 1.9, windup: 0.7, cooldownMin: 2.5, cooldownMax: 4.5, duration: 0.45 }
+    : { type: 'projectile', dmg: 8, range: 3.5, windup: 0.8, cooldownMin: 3.5, cooldownMax: 5.5, speed: 3.2 };
+}
+export function defaultSheet() {
+  return {
+    version: 1,
+    rank: 'monster', level: 1, hp: 1000, xp: null, role: '', description: '',
+    move: { speed: 1.1, style: 'waddle' },
+    behavior: { mode: 'approach', keepMin: 1.0, keepMax: 1.4, aggro: 8, fleeOnHit: false },
+    attacks: [],
+    regen: { enabled: false, delay: 2, cubesPerSec: 20, healPerSec: 10 },
+    spawn: { test: true, respawn: 3 },
+  };
+}
+// complète une fiche incomplète avec les valeurs par défaut
+export function completeSheet(s) {
+  const d = defaultSheet(), out = { ...d, ...(s || {}) };
+  for (const k of ['move', 'behavior', 'regen', 'spawn']) out[k] = { ...d[k], ...((s || {})[k] || {}) };
+  out.attacks = ((s || {}).attacks || []).map(a => ({ ...defaultAttack(a.type), ...a }));
+  return out;
+}
