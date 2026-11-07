@@ -344,7 +344,7 @@ const SLIME = {
   shell: { thickness: 2, color: 0x237a3a },          // carapace de 8 cm autour du noyau
   regen: { delay: 2, interval: 0.1, perTick: 2, heal: 10 }, // repousse + soin des cubes abîmés (PV/s)
   attack: { type: 'leap', range: 1.9, wind: 0.7, dur: 0.45, dmg: 12, cooldown: [2.5, 4.5] }, // se tasse puis bondit
-  name: 'Slime', level: 1, cat: 'monster', behavior: 'approach', hp: 3000, hop: true,
+  name: 'Slime', level: 1, cat: 'monster', behavior: 'approach', hp: 4500, hop: true,
   build: () => buildModel(29, 24, 29,
     (x, j, z) => { const y = j + 0.5 - 9, ry = y < 0 ? 9 : 15, r = 14.4; return (x * x + z * z) / (r * r) + (y * y) / (ry * ry) <= 1; },
     (x, j, z, { depth }) => {
@@ -709,7 +709,7 @@ class Monster {
   }
   showSlot(i) {
     const s = this.mesh.count++; this.slotOf[i] = s; this.voxOfSlot[s] = i;
-    this.writeMatrix(this.mesh, s, i, V * 0.97); this.mesh.setColorAt(s, this.colorFor(i)); this.mesh.instanceColor.needsUpdate = true;
+    this.writeMatrix(this.mesh, s, i, V); this.mesh.setColorAt(s, this.colorFor(i)); this.mesh.instanceColor.needsUpdate = true;
   }
   hideSlot(i) {
     const s = this.slotOf[i], last = this.mesh.count - 1, j = this.voxOfSlot[last];
@@ -730,7 +730,7 @@ class Monster {
   // à appeler après un changement de alive[i]
   setVoxel(i) {
     const ci = this.coreIdx[i];
-    if (ci >= 0) this.writeMatrix(this.coreMesh, ci, i, this.alive[i] ? V * 0.97 : 0);
+    if (ci >= 0) this.writeMatrix(this.coreMesh, ci, i, this.alive[i] ? V : 0);
     this.refreshVis(i);
     const m = this.model, a = m.vi[i], b = m.vj[i], c = m.vk[i];
     for (const [p, q, r] of NB6) {
@@ -744,7 +744,7 @@ class Monster {
     const n = this.model.count; this.alive.fill(1);
     this.vhp.set(this.vmax); this.vSwing.fill(0); this.noRegrow.fill(0); this.damaged.clear();
     this.mesh.count = 0; this.slotOf.fill(-1);
-    for (let i = 0; i < n; i++) { if (this.coreIdx[i] >= 0) this.writeMatrix(this.coreMesh, this.coreIdx[i], i, V * 0.97); else if (this.isSurface(i)) this.showSlot(i); }
+    for (let i = 0; i < n; i++) { if (this.coreIdx[i] >= 0) this.writeMatrix(this.coreMesh, this.coreIdx[i], i, V); else if (this.isSurface(i)) this.showSlot(i); }
     this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
     if (this.kind.behavior === 'passive') { this.pickWaypoint(); this.group.position.copy(this.wp); this.pickWaypoint(); }
     else if (this.kind.behavior === 'idle') this.group.position.set(this.kind.home[0], 0, this.kind.home[1]);
