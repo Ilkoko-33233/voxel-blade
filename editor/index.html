@@ -184,65 +184,16 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial } from '../shared/look.js';
 
-/* ============ Catalogues ============ */
-const TEXTURES = [
-  { id: 'none', name: 'Aucune' }, { id: 'grain', name: 'Grain' }, { id: 'scales', name: 'Écailles' },
-  { id: 'wood', name: 'Bois' }, { id: 'stone', name: 'Pierre' }, { id: 'cracks', name: 'Fissures' },
-  { id: 'dots', name: 'Points' }, { id: 'stripes', name: 'Rayures' }, { id: 'fabric', name: 'Tissu' },
-];
-const LIGHTS = [
-  { id: 'matte', name: 'Mat' }, { id: 'glossy', name: 'Brillant' }, { id: 'metal', name: 'Métallique' },
-  { id: 'glow', name: 'Lumineux' }, { id: 'translucent', name: 'Translucide' },
-];
-// Textures utiles (types de cubes du jeu). « color » = couleur repère de la vue « texture utile ».
-let MATS = [
-  { id: 'gel', name: 'Gelée', hp: 30, color: '#4caf50', info: 'se régénère' },
-  { id: 'eye', name: 'Œil', hp: 15, color: '#ffd23a', info: 'point faible ×3' },
-  { id: 'shell', name: 'Carapace', hp: 60, color: '#3a7bd5', info: 'un trou percé reste ouvert' },
-  { id: 'core', name: 'Noyau', hp: 20, color: '#ff3ad0', info: 'détruit = mort immédiate' },
-  { id: 'flesh', name: 'Chair', hp: 40, color: '#e57373', info: '' },
-  { id: 'bone', name: 'Os', hp: 80, color: '#f2f2f2', info: '' },
-  { id: 'fur', name: 'Fourrure', hp: 25, color: '#a1887f', info: '' },
-  { id: 'wood', name: 'Bois', hp: 70, color: '#c07a3a', info: '' },
-  { id: 'stone', name: 'Pierre', hp: 120, color: '#90a4ae', info: '' },
-];
+/* ============ Catalogues (types de cubes, textures, lumières : voir shared/look.js) ============ */
 const PART_TINTS = ['#ff6b6b', '#4dabf7', '#ffd43b', '#69db7c', '#da77f2', '#ffa94d', '#3bc9db', '#f783ac'];
 const LS = { auto: 'voxelblade.editor.autosave', presets: 'voxelblade.editor.presets', git: 'voxelblade.editor.github' };
 const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } };
 
-/* ============ Atlas des textures visuelles (motifs procéduraux 32×32) ============ */
-const TILE = 32, NT = TEXTURES.length;
-function hashN(x, y, s) { let h = (x * 374761393 + y * 668265263 + s * 2147483647) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
-function smoothNoise(x, y, s) {
-  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
-  const a = hashN(xi & 7, yi & 7, s), b = hashN((xi + 1) & 7, yi & 7, s), c = hashN(xi & 7, (yi + 1) & 7, s), d = hashN((xi + 1) & 7, (yi + 1) & 7, s);
-  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
-  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
-}
-function texValue(id, x, y) { // luminosité 0..1 du motif (multipliée par la couleur)
-  const n = hashN(x, y, 3);
-  switch (id) {
-    case 'none': return 1;
-    case 'grain': return 0.86 + 0.14 * n;
-    case 'scales': { const r = Math.floor(y / 8), ox = (r % 2) * 4, cx = ((x + ox) % 8) - 4, cy = (y % 8); const d = Math.hypot(cx, cy - 8); return d > 7 && d < 8.6 ? 0.62 : 0.92 - 0.12 * (cy / 8) + 0.04 * n; }
-    case 'wood': { const v = Math.sin((y + smoothNoise(x / 8, y / 8, 5) * 6) * 0.9); return 0.8 + 0.12 * v + 0.05 * n; }
-    case 'stone': { const v = smoothNoise(x / 6, y / 6, 9); return (v > 0.48 && v < 0.53) ? 0.62 : 0.78 + 0.18 * smoothNoise(x / 3, y / 3, 11) + 0.04 * n; }
-    case 'cracks': { const v = Math.abs(smoothNoise(x / 7, y / 7, 13) - 0.5); return v < 0.035 ? 0.5 : 0.95 + 0.05 * n; }
-    case 'dots': { const cx = (x % 8) - 3.5, cy = (y % 8) - 3.5; return cx * cx + cy * cy < 4.5 ? 0.68 : 1; }
-    case 'stripes': return ((x + y) % 8) < 3 ? 0.75 : 1;
-    case 'fabric': { const a = (x % 4) < 2, b = (y % 4) < 2; return (a !== b ? 0.8 : 0.96) - 0.04 * n; }
-  }
-  return 1;
-}
-const atlasCanvas = document.createElement('canvas'); atlasCanvas.width = TILE * NT; atlasCanvas.height = TILE;
-{
-  const g = atlasCanvas.getContext('2d'), img = g.createImageData(TILE * NT, TILE);
-  TEXTURES.forEach((t, k) => { for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) { const v = Math.round(255 * texValue(t.id, x, y)), o = ((y * TILE * NT) + k * TILE + x) * 4; img.data[o] = img.data[o + 1] = img.data[o + 2] = v; img.data[o + 3] = 255; } });
-  g.putImageData(img, 0, 0);
-}
-const atlas = new THREE.CanvasTexture(atlasCanvas); atlas.magFilter = THREE.NearestFilter; atlas.minFilter = THREE.NearestFilter; atlas.colorSpace = THREE.SRGBColorSpace; atlas.generateMipmaps = false;
+/* ============ Atlas des textures visuelles ============ */
+const NT = TEXTURES.length, atlasCanvas = makeAtlasCanvas(), atlas = makeAtlas(THREE, atlasCanvas);
 
 /* ============ Données de la créature ============ */
 let P;               // { name, nx, ny, nz, presets[], parts[] }
@@ -399,19 +350,7 @@ renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
 const world = new THREE.Group(); scene.add(world);
 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 
-function makeMaterial(lightId) {
-  const m = new THREE.MeshStandardMaterial({ map: atlas, roughness: 1, metalness: 0 });
-  if (lightId === 'glossy') { m.roughness = 0.18; }
-  if (lightId === 'metal') { m.roughness = 0.3; m.metalness = 0.9; }
-  if (lightId === 'translucent') { m.transparent = true; m.opacity = 0.6; m.roughness = 0.25; m.depthWrite = false; }
-  m.onBeforeCompile = sh => {
-    sh.vertexShader = 'attribute float aTex;\n' + sh.vertexShader.replace('#include <uv_vertex>',
-      '#include <uv_vertex>\n#ifdef USE_MAP\n vMapUv = (vMapUv + vec2(aTex, 0.0)) * vec2(' + (1 / NT).toFixed(8) + ', 1.0);\n#endif');
-    if (lightId === 'glow') sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * 0.95;');
-  };
-  m.customProgramCacheKey = () => 'vb-' + lightId;
-  return m;
-}
+const makeMaterial = id => makeVoxelMaterial(THREE, id, atlas);
 const buckets = LIGHTS.map(L => ({ id: L.id, mat: makeMaterial(L.id), mesh: null, cap: 0, cells: null }));
 function ensureCap(b, n) {
   if (b.mesh && b.cap >= n) return;
