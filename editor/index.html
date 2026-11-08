@@ -31,7 +31,7 @@
   .row{display:flex;align-items:center;gap:6px;margin:5px 0}
   .row label{min-width:86px;color:var(--mut)}
   .row select{flex:1}
-  #main{display:grid;grid-template-columns:1fr 1fr;min-height:0;min-width:0}
+  #main{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(0,1fr);min-height:0;min-width:0}
   #view3d{position:relative;min-width:0;border-right:1px solid var(--line)}
   #view3d canvas{display:block}
   #slicePane{display:flex;flex-direction:column;min-width:0;min-height:0}
@@ -81,6 +81,22 @@
   .tree .cat{color:var(--mut);margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
   .tree .cr{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin:3px 0;cursor:pointer;background:var(--panel2)}
   .tree .cr:hover{border-color:var(--acc)}
+  #animPane{display:flex;flex-direction:column;min-width:0;min-height:0}
+  #apTop{flex:1 1 0;min-height:0;overflow:auto;padding:10px 12px}
+  #tlBar,#timeline{flex:none}
+  #apTop .sl{display:grid;grid-template-columns:78px 1fr 64px;gap:6px;align-items:center;margin:3px 0}
+  #apTop .sl label{color:var(--mut);font-size:12px}
+  #apTop .grp{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px}
+  #apTop h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}
+  #tlBar{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--panel);border-top:1px solid var(--line);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  #tlBar .time{font-variant-numeric:tabular-nums;min-width:120px;color:#fff}
+  #timeline{display:block;width:100%;height:190px;cursor:pointer;background:#141820}
+  #easeCv{background:#0f1218;border:1px solid var(--line);border-radius:6px;cursor:crosshair}
+  .alist{display:flex;flex-direction:column;gap:3px}
+  .alist button{text-align:left}
+  .mk{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:12px}
+  .catrow{display:flex;align-items:center;gap:6px;margin:4px 0}
+  .catrow input{flex:1}
   .texprev{width:28px;height:28px;border:1px solid var(--line);border-radius:4px;image-rendering:pixelated}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
@@ -89,7 +105,7 @@
 <div id="app">
   <header>
     <span class="title">VOXEL BLADE</span>
-    <span class="tabs"><button id="tabModel" class="on">Modèle</button><button id="tabSheet">Fiche</button></span>
+    <span class="tabs"><button id="tabModel" class="on">Modèle</button><button id="tabSheet">Fiche</button><button id="tabAnim">Animation</button></span>
     <input id="cName" type="text" value="Nouvelle créature" title="Nom de la créature">
     <span class="sep"></span>
     <button id="bNew">Nouveau</button>
@@ -109,6 +125,7 @@
   </header>
 
   <aside id="left">
+  <div id="leftModel">
     <h3>Outils</h3>
     <div class="tools" id="tools"></div>
     <div class="row"><label for="shapeFill">Formes</label><select id="shapeFill"><option value="1">Pleines</option><option value="0">Contour</option></select></div>
@@ -127,6 +144,26 @@
     <h3>Presets de matière</h3>
     <div class="presets" id="presets"></div>
     <div class="row"><button id="bAddPreset" style="flex:1">+ Créer depuis le pinceau</button></div>
+  </div>
+  <div id="leftAnim" hidden>
+    <h3>Animations</h3>
+    <div class="alist" id="animList"></div>
+    <h3>Réglages</h3>
+    <div class="row"><label>Durée</label><input id="anDur" type="number" step="0.05" min="0.05"> <span class="small">s</span></div>
+    <div class="row"><label>En boucle</label><input id="anLoop" type="checkbox"></div>
+    <p class="small" id="anNote"></p>
+    <h3>Repères</h3>
+    <div id="anMarkers"></div>
+    <div class="row"><select id="mkType"><option value="impact">Impact (le coup touche)</option><option value="shoot">Tir (départ du projectile)</option></select><button id="mkAdd">+ à cet instant</button></div>
+    <h3>Pose</h3>
+    <div class="row" style="flex-wrap:wrap;gap:4px">
+      <button id="poCopy">Copier la pose</button><button id="poPaste">Coller la pose</button>
+      <button id="poMirror" title="Inverse gauche et droite (d'après le nom des pièces)">Pose miroir</button>
+      <button id="poKeyAll" title="Pose une clé pour toutes les pièces à cet instant">Clé partout</button>
+      <button id="poReset">Remettre la pièce à zéro</button>
+    </div>
+    <p class="small">Chaque réglage d'une pièce pose automatiquement une clé à l'instant affiché. Espace : lecture · ← → : image par image · Suppr : effacer la clé choisie.</p>
+  </div>
   </aside>
 
   <div id="main">
@@ -144,6 +181,25 @@
       <div id="sliceWrap"><canvas id="slice"></canvas><div class="hint" id="hintSlice">[ et ] : changer de couche · la couche en dessous apparaît en transparence</div></div>
     </div>
     <div id="sheetPane" hidden></div>
+    <div id="animPane" hidden>
+      <div id="apTop">
+        <div class="grp">
+          <div class="row"><b id="apPart">—</b><span class="small">cliquez une pièce dans la vue 3D ou la ligne de temps</span></div>
+          <div class="row"><span class="small">Poignées 3D</span><button data-gm="rotate" class="on">Rotation</button><button data-gm="translate">Déplacement</button><button data-gm="scale">Échelle</button></div>
+          <div id="apSliders"></div>
+        </div>
+        <div class="grp" id="apEase"></div>
+      </div>
+      <div id="tlBar">
+        <button id="tlStart" title="Début">⏮</button><button id="tlPrevK" title="Clé précédente">◆◀</button><button id="tlPrev" title="Image précédente (←)">◀</button>
+        <button id="tlPlay" title="Lecture (Espace)">▶</button>
+        <button id="tlNext" title="Image suivante (→)">▶</button><button id="tlNextK" title="Clé suivante">▶◆</button><button id="tlEnd" title="Fin">⏭</button>
+        <span class="time" id="tlTime"></span>
+        <label class="small"><input id="tlLoop" type="checkbox" checked> lecture en boucle</label>
+        <span style="flex:1"></span><button id="tlDelKey">Supprimer la clé</button>
+      </div>
+      <canvas id="timeline"></canvas>
+    </div>
   </div>
 
   <aside id="right">
@@ -198,6 +254,12 @@
   <p class="small" id="gPath"></p>
   <div class="actions"><button id="gCancel">Annuler</button><button id="gOk" class="primary">Envoyer</button></div>
 </dialog>
+<dialog id="dlgCats">
+  <h2>Gérer les catégories</h2>
+  <div id="catList" style="max-height:55vh;overflow:auto;min-width:420px"></div>
+  <p class="small">Le nom affiché peut être changé librement. Une catégorie ne peut être supprimée que si elle est vide (ni créature, ni sous-catégorie).</p>
+  <div class="actions"><button id="cCancel">Fermer</button><button id="cApply" class="primary">Enregistrer sur GitHub</button></div>
+</dialog>
 <dialog id="dlgOpen">
   <h2>Ouvrir une créature du dépôt</h2>
   <div class="tree" id="openTree">Chargement…</div>
@@ -209,6 +271,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial, RANKS, MOVE_STYLES, BEHAVIORS, ATTACK_TYPES, defaultAttack, defaultSheet, completeSheet } from '../shared/look.js';
 
 /* ============ Catalogues (types de cubes, textures, lumières : voir shared/look.js) ============ */
@@ -233,7 +296,7 @@ function newProject(name, nx, ny, nz) {
   let presets = []; try { presets = JSON.parse(lsGet(LS.presets) || '[]'); } catch (e) { }
   if (!presets.length) presets = defaultPresets();
   P = { name, nx, ny, nz, presets, parts: [{ name: 'Corps', parent: -1, pivot: [Math.floor(nx / 2), 0, Math.floor(nz / 2)], visible: true }],
-    id: null, folder: 'monstres', sheet: defaultSheet() };
+    id: null, folder: 'monstres', sheet: defaultSheet(), animations: {} };
   alloc(nx, ny, nz); history.length = 0; future.length = 0;
 }
 function defaultPresets() {
@@ -478,6 +541,7 @@ function pick3D(e) {
 let drag3D = false, last3D = -1;
 renderer.domElement.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
+  if (tabMode === 'anim') { animPick(e); return; }
   const p = pick3D(e); if (!p) return;
   if (tool === 'pivot') { const c = p.hit || p.add; P.parts[activePart].pivot = c.slice(); setTool('pencil'); markDirty(); renderParts(); toast('Pivot placé'); return; }
   if (tool === 'picker') { if (p.hit) pickAt(p.i); return; }
@@ -486,6 +550,7 @@ renderer.domElement.addEventListener('pointerdown', e => {
   renderer.domElement.setPointerCapture(e.pointerId);
 });
 renderer.domElement.addEventListener('pointermove', e => {
+  if (tabMode === 'anim') { hover.visible = false; return; }
   const p = pick3D(e);
   if (p) { const c = (tool === 'pencil' ? p.add : p.hit) || p.add; hover.position.set(c[0] + 0.5 - P.nx / 2, c[1] + 0.5, c[2] + 0.5 - P.nz / 2); hover.visible = inB(...c); } else hover.visible = false;
   if (drag3D && p && tool !== 'pencil') act3D(p);
@@ -681,6 +746,7 @@ function renderParts() {
       const target = k === 0 ? 1 : 0;
       for (let i = 0; i < occ.length; i++) { if (prt[i] === k) prt[i] = target; if (prt[i] > k) prt[i]--; }
       P.parts.splice(k, 1); P.parts.forEach(q => { if (q.parent === k) q.parent = -1; else if (q.parent > k) q.parent--; });
+      remapTracks(k);
       activePart = 0; history.length = 0; future.length = 0; markDirty(true); renderParts(); rebuildPivots();
     };
     el.append(d);
@@ -735,6 +801,7 @@ function loop(t) {
   if (dirty3D) { rebuild3D(); dirty3D = false; }
   if (dirtySlice) { drawSlice(); dirtySlice = false; }
   if (dirtyStats && t - statsTimer > 400) { statsTimer = t; renderStats(); dirtyStats = false; }
+  animTick(t);
   controls.update(); renderer.render(scene, camera);
 }
 function resize() {
@@ -753,7 +820,7 @@ function serialize() {
   });
   let bin = ''; for (let k = 0; k < buf.length; k += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(k, k + 0x8000));
   return {
-    format: 'voxelblade-creature', version: 1, id: P.id, name: P.name, folder: P.folder, sheet: P.sheet, voxelSize: 0.04, size: [P.nx, P.ny, P.nz],
+    format: 'voxelblade-creature', version: 1, id: P.id, name: P.name, folder: P.folder, sheet: P.sheet, animations: P.animations, voxelSize: 0.04, size: [P.nx, P.ny, P.nz],
     textures: TEXTURES.map(t => t.id), materials: MATS.map(m => m.id), lights: LIGHTS.map(l => l.id),
     presets: P.presets, parts: P.parts.map(p => ({ name: p.name, parent: p.parent, pivot: p.pivot, visible: p.visible })),
     voxelLayout: 'x,y,z,r,g,b,texture,material,light,part (10 octets par cube)', voxelCount: list.length, voxels: btoa(bin),
@@ -763,7 +830,7 @@ function deserialize(d) {
   if (!d || d.format !== 'voxelblade-creature') throw new Error('Ce fichier n\'est pas une créature Voxel Blade');
   const [nx, ny, nz] = d.size; newProject(d.name || 'Créature', nx, ny, nz);
   P.presets = Array.isArray(d.presets) && d.presets.length ? d.presets : P.presets;
-  P.id = d.id || null; P.folder = d.folder || 'monstres'; P.sheet = completeSheet(d.sheet);
+  P.id = d.id || null; P.folder = d.folder || 'monstres'; P.sheet = completeSheet(d.sheet); P.animations = d.animations || {};
   P.parts = (d.parts && d.parts.length ? d.parts : P.parts).map(p => ({ name: p.name, parent: p.parent ?? -1, pivot: p.pivot || [0, 0, 0], visible: p.visible !== false }));
   const mapT = (d.textures || []).map(id => byId(TEXTURES, id)), mapM = (d.materials || []).map(id => byId(MATS, id)), mapL = (d.lights || []).map(id => byId(LIGHTS, id));
   const bin = atob(d.voxels || '');
@@ -793,6 +860,7 @@ $('cName').onchange = () => { P.name = $('cName').value; markDirty(); renderShee
 function afterLoad() {
   activePart = 0; $('cName').value = P.name; slice.layer = Math.min(slice.layer, sliceMax());
   rebuildHelpers(); rebuildPivots(); syncSliceUI(); renderParts(); renderPresets(); frameCamera(); markDirty(); dirtyStats = true; renderSheet();
+  if (typeof tabMode !== 'undefined' && tabMode === 'anim') enterAnim();
 }
 // nouveau
 $('bNew').onclick = () => $('dlgNew').showModal();
@@ -907,12 +975,17 @@ $('bOpenGit').onclick = async () => {
 $('oCancel').onclick = () => $('dlgOpen').close();
 
 /* ============ Onglets ============ */
+let tabMode = 'model';
 function setTab(t) {
-  $('tabModel').classList.toggle('on', t === 'model'); $('tabSheet').classList.toggle('on', t === 'sheet');
-  $('slicePane').hidden = t !== 'model'; $('sheetPane').hidden = t !== 'sheet';
+  tabMode = t;
+  $('tabModel').classList.toggle('on', t === 'model'); $('tabSheet').classList.toggle('on', t === 'sheet'); $('tabAnim').classList.toggle('on', t === 'anim');
+  $('slicePane').hidden = t !== 'model'; $('sheetPane').hidden = t !== 'sheet'; $('animPane').hidden = t !== 'anim';
+  $('leftModel').hidden = t === 'anim'; $('leftAnim').hidden = t !== 'anim';
+  const anim = t === 'anim'; world.visible = !anim; helpers.visible = !anim; pivotGroup.visible = !anim;
+  if (anim) enterAnim(); else exitAnim();
   if (t === 'sheet') renderSheet(); resize();
 }
-$('tabModel').onclick = () => setTab('model'); $('tabSheet').onclick = () => setTab('sheet');
+$('tabModel').onclick = () => setTab('model'); $('tabSheet').onclick = () => setTab('sheet'); $('tabAnim').onclick = () => setTab('anim');
 
 /* ============ Fiche de la créature ============ */
 function catLabel(path) {
@@ -940,7 +1013,7 @@ function renderSheet() {
   </section>
   <section><h4>Rangement</h4>
     <div class="f"><label>Catégorie</label><select id="shFolder">${catOpts}</select></div>
-    <div class="f"><label></label><span class="u"><button id="shAddCat">+ Catégorie</button><button id="shAddSub">+ Sous-catégorie de « ${escapeHtml(catLabel(P.folder) || '—')} »</button></span></div>
+    <div class="f"><label></label><span class="u"><button id="shManageCats">Gérer les catégories…</button><button id="shAddCat">+ Catégorie</button><button id="shAddSub">+ Sous-catégorie de « ${escapeHtml(catLabel(P.folder) || '—')} »</button></span></div>
     <p class="small">Fichier : creatures/${escapeHtml(creaturePath())}. Les nouvelles catégories sont enregistrées dans le dépôt au prochain envoi.</p>
   </section>
   <section><h4>Déplacement</h4>
@@ -983,6 +1056,7 @@ function renderSheet() {
     catalog.categories[path] = label.trim(); P.folder = path; markDirty(); renderSheet(); toast('Catégorie « ' + catLabel(path) + ' » créée');
   };
   $('shAddCat').onclick = () => addCat(''); $('shAddSub').onclick = () => addCat(P.folder);
+  $('shManageCats').onclick = openCats;
   renderAttacks();
   $('shAddAtk').onclick = () => { S.attacks.push(defaultAttack('leap')); markDirty(); renderAttacks(); };
 }
@@ -1010,12 +1084,395 @@ function renderAttacks() {
 }
 function totalCubeHp() { let hp = 0; for (let i = 0; i < occ.length; i++) if (occ[i]) hp += MATS[mat[i]] ? MATS[mat[i]].hp : 0; return hp; }
 
+/* ============ Gestion des catégories ============ */
+async function openCats() { await loadCatalog(); renderCats(); $('dlgCats').showModal(); }
+function renderCats() {
+  const el = $('catList'); el.innerHTML = '';
+  const keys = Object.keys(catalog.categories).sort();
+  if (!keys.length) { el.textContent = 'Aucune catégorie.'; return; }
+  keys.forEach(k => {
+    const depth = k.split('/').length - 1, hasSub = keys.some(o => o.startsWith(k + '/')), hasCr = catalog.creatures.some(c => c.path.startsWith(k + '/'));
+    const d = document.createElement('div'); d.className = 'catrow'; d.style.paddingLeft = (depth * 18) + 'px';
+    d.innerHTML = `<input type="text" value="${escapeHtml(catalog.categories[k])}"><span class="small">${escapeHtml(k)}</span><button ${hasSub || hasCr ? 'disabled title="Catégorie non vide"' : ''}>Supprimer</button>`;
+    d.querySelector('input').onchange = e => { catalog.categories[k] = e.target.value.trim() || k.split('/').pop(); catsDirty = true; };
+    d.querySelector('button').onclick = () => { delete catalog.categories[k]; if (P.folder === k) P.folder = k.split('/').slice(0, -1).join('/') || 'monstres'; catsDirty = true; renderCats(); };
+    el.append(d);
+  });
+}
+let catsDirty = false;
+$('cCancel').onclick = () => { $('dlgCats').close(); renderSheet(); };
+$('cApply').onclick = async () => {
+  const c = gitCfg(); if (!c.token) { toast('Ajoute d\'abord ton jeton via « Envoyer ▸ GitHub »'); return; }
+  try {
+    const ig = await ghGet('creatures/index.json'), idx = (ig && ig.json && ig.json.categories) ? ig.json : catalog;
+    idx.categories = { ...catalog.categories };
+    await ghPut(c, 'creatures/index.json', idx, ig && ig.sha, 'Index des créatures : catégories (éditeur)');
+    catalog = idx; catsDirty = false; toast('Catégories enregistrées sur GitHub'); $('dlgCats').close(); renderSheet();
+  } catch (err) { toast('Échec : ' + err.message); }
+};
+
+/* ============ Éditeur d'animations ============ */
+const FPS = 30, D2R = Math.PI / 180;
+const EASES = [
+  { id: 'linear', name: 'Constant', bz: [0, 0, 1, 1] },
+  { id: 'in', name: 'Accélère', bz: [0.55, 0, 1, 0.45] },
+  { id: 'out', name: 'Ralentit', bz: [0, 0.55, 0.45, 1] },
+  { id: 'smooth', name: 'Doux (accélère puis ralentit)', bz: [0.65, 0, 0.35, 1] },
+  { id: 'overshoot', name: 'Élan (dépasse puis revient)', bz: [0.34, 1.56, 0.64, 1] },
+  { id: 'anticip', name: 'Prise d\'élan (recule d\'abord)', bz: [0.36, 0, 0.66, -0.56] },
+  { id: 'step', name: 'Palier (change d\'un coup)', step: true },
+  { id: 'custom', name: 'Personnalisée' },
+];
+function bezier(x, [x1, y1, x2, y2]) { // courbe de Bézier cubique (0,0)-(x1,y1)-(x2,y2)-(1,1), comme en CSS
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const X = t => ((ax * t + bx) * t + cx) * t, dX = t => (3 * ax * t + 2 * bx) * t + cx, Y = t => ((ay * t + by) * t + cy) * t;
+  let t = x; for (let k = 0; k < 8; k++) { const e = X(t) - x, d = dX(t); if (Math.abs(e) < 1e-5) break; if (Math.abs(d) < 1e-6) break; t -= e / d; }
+  if (t < 0 || t > 1 || Math.abs(X(t) - x) > 1e-3) { let lo = 0, hi = 1; t = x; for (let k = 0; k < 30; k++) { if (X(t) < x) lo = t; else hi = t; t = (lo + hi) / 2; } }
+  return Y(t);
+}
+const easeVal = (ease, u) => !ease ? u : ease.preset === 'step' ? (u < 1 ? 0 : 1) : bezier(u, ease.bz || [0.65, 0, 0.35, 1]);
+function animDefs() {
+  const L = [
+    { id: 'idle', name: 'Repos', loop: true, dur: 2 }, { id: 'walk', name: 'Marche', loop: true, dur: 0.8 },
+    { id: 'spawn', name: 'Apparition', loop: false, dur: 0.6 }, { id: 'hit', name: 'Coup reçu', loop: false, dur: 0.3 }, { id: 'death', name: 'Mort', loop: false, dur: 1 },
+  ];
+  (P.sheet.attacks || []).forEach((a, k) => {
+    const T = a.type === 'leap' ? 'bond' : 'projectile';
+    L.push({ id: `atk${k + 1}_windup`, name: `Attaque ${k + 1} (${T}) · préparation`, loop: false, dur: +a.windup || 0.5, lock: 'Durée = temps de préparation réglé dans la fiche' });
+    L.push({ id: `atk${k + 1}_strike`, name: `Attaque ${k + 1} (${T}) · frappe`, loop: false, dur: a.type === 'leap' ? (+a.duration || 0.45) : 0.4, lock: a.type === 'leap' ? 'Durée = durée du bond réglée dans la fiche' : null, marker: a.type === 'leap' ? 'impact' : 'shoot' });
+  });
+  return L;
+}
+function getAnim(def) {
+  let a = P.animations[def.id];
+  if (!a) a = P.animations[def.id] = { duration: def.dur, loop: def.loop, tracks: {}, markers: def.marker ? [{ t: def.marker === 'impact' ? def.dur : +(def.dur * 0.5).toFixed(3), type: def.marker, part: 0 }] : [] };
+  if (def.lock) a.duration = def.dur;
+  a.tracks = a.tracks || {}; a.markers = a.markers || [];
+  return a;
+}
+function remapTracks(k) { // une pièce supprimée : on décale les pistes
+  for (const a of Object.values(P.animations || {})) {
+    const nt = {}; for (const [key, v] of Object.entries(a.tracks || {})) { const i = +key; if (i === k) continue; nt[i > k ? i - 1 : i] = v; } a.tracks = nt;
+    (a.markers || []).forEach(m => { if (m.part === k) m.part = 0; else if (m.part > k) m.part--; });
+  }
+}
+const AN = { def: null, anim: null, t: 0, playing: false, part: 0, selKey: null, last: 0, clip: null, rigDirty: true };
+// ----- squelette 3D : un groupe par pièce, placé à son pivot, enfants rattachés aux parents -----
+let rigRoot = null, rigParts = [];
+const pivW = (p) => new THREE.Vector3(p.pivot[0] + 0.5 - P.nx / 2, p.pivot[1] + 0.5, p.pivot[2] + 0.5 - P.nz / 2);
+function partParent(k) { // parent valide (pas de boucle)
+  let p = P.parts[k].parent, seen = new Set([k]), q = p;
+  while (q >= 0 && q < P.parts.length) { if (seen.has(q)) return -1; seen.add(q); q = P.parts[q].parent; }
+  return p >= 0 && p < P.parts.length ? p : -1;
+}
+function buildRig() {
+  if (rigRoot) { scene.remove(rigRoot); rigRoot.traverse(o => { if (o.isMesh && o.geometry !== boxGeo) o.geometry.dispose(); }); }
+  rigRoot = new THREE.Group(); scene.add(rigRoot);
+  rigParts = P.parts.map((p, k) => { const g = new THREE.Group(); g.userData.part = k; return { group: g, base: new THREE.Vector3() }; });
+  P.parts.forEach((p, k) => {
+    const par = partParent(k), w = pivW(p), base = par >= 0 ? w.clone().sub(pivW(P.parts[par])) : w;
+    rigParts[k].base.copy(base); rigParts[k].group.position.copy(base);
+    (par >= 0 ? rigParts[par].group : rigRoot).add(rigParts[k].group);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8), new THREE.MeshBasicMaterial({ color: PART_TINTS[k % PART_TINTS.length], depthTest: false }));
+    dot.renderOrder = 6; dot.userData.dot = true; rigParts[k].group.add(dot);
+  });
+  // cubes de surface de chaque pièce (une face contre une autre pièce compte comme surface : elle se voit quand le membre bouge)
+  const per = P.parts.map(() => LIGHTS.map(() => []));
+  for (let z = 0; z < P.nz; z++) for (let y = 0; y < P.ny; y++) for (let x = 0; x < P.nx; x++) {
+    const i = idx(x, y, z); if (!occ[i]) continue; const pt = prt[i]; if (!P.parts[pt]) continue;
+    let inner = true;
+    for (const [a, b, c] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) { const X = x + a, Y = y + b, Z = z + c; if (!inB(X, Y, Z)) { inner = false; break; } const j = idx(X, Y, Z); if (!occ[j] || prt[j] !== pt) { inner = false; break; } }
+    if (!inner) per[pt][view.light ? lit[i] : 0].push(i);
+  }
+  const m4 = new THREE.Matrix4();
+  per.forEach((byLight, k) => {
+    const w = pivW(P.parts[k]);
+    byLight.forEach((cells, L) => {
+      if (!cells.length) return;
+      const geo = boxGeo.clone(); geo.setAttribute('aTex', new THREE.InstancedBufferAttribute(new Float32Array(cells.length), 1));
+      const mesh = new THREE.InstancedMesh(geo, buckets[L].mat, cells.length); mesh.userData.part = k; if (LIGHTS[L].id === 'translucent') mesh.renderOrder = 2;
+      cells.forEach((i, s) => {
+        const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny));
+        m4.makeTranslation(x + 0.5 - P.nx / 2 - w.x, y + 0.5 - w.y, z + 0.5 - P.nz / 2 - w.z); mesh.setMatrixAt(s, m4);
+        mesh.setColorAt(s, displayColor(i, tmpC)); geo.attributes.aTex.array[s] = view.tex ? tex[i] : 0;
+      });
+      rigParts[k].group.add(mesh);
+    });
+  });
+  AN.rigDirty = false;
+}
+// ----- évaluation d'une pose -----
+const ZERO = () => ({ rot: [0, 0, 0], pos: [0, 0, 0], scl: [1, 1, 1] });
+function evalPart(anim, k, t) {
+  const keys = (anim.tracks[k] || []); if (!keys.length) return ZERO();
+  if (t <= keys[0].t) return keys[0]; const last = keys[keys.length - 1]; if (t >= last.t) return last;
+  let i = 0; while (keys[i + 1].t < t) i++;
+  const a = keys[i], b = keys[i + 1], e = easeVal(a.ease, (t - a.t) / (b.t - a.t)), L = (u, v) => u + (v - u) * e;
+  return { rot: a.rot.map((v, n) => L(v, b.rot[n])), pos: a.pos.map((v, n) => L(v, b.pos[n])), scl: a.scl.map((v, n) => L(v, b.scl[n])) };
+}
+function applyPose() {
+  if (!rigRoot || !AN.anim) return;
+  rigParts.forEach((r, k) => {
+    const p = evalPart(AN.anim, k, AN.t);
+    r.group.position.set(r.base.x + p.pos[0], r.base.y + p.pos[1], r.base.z + p.pos[2]);
+    r.group.rotation.set(p.rot[0] * D2R, p.rot[1] * D2R, p.rot[2] * D2R);
+    r.group.scale.set(p.scl[0] || 1e-3, p.scl[1] || 1e-3, p.scl[2] || 1e-3);
+  });
+}
+// ----- clés -----
+const snapT = t => Math.round(t * FPS) / FPS;
+function keyAt(k, t, create) {
+  const tr = AN.anim.tracks[k] = AN.anim.tracks[k] || [];
+  let key = tr.find(q => Math.abs(q.t - t) < 0.5 / FPS);
+  if (!key && create) {
+    const p = evalPart(AN.anim, k, t);
+    key = { t: snapT(t), rot: p.rot.slice(), pos: p.pos.slice(), scl: p.scl.slice(), ease: { preset: 'smooth', bz: [0.65, 0, 0.35, 1] } };
+    tr.push(key); tr.sort((a, b) => a.t - b.t);
+  }
+  if (!tr.length) delete AN.anim.tracks[k];
+  return key;
+}
+function setPartValue(field, n, v) { // pose une clé automatiquement
+  const key = keyAt(AN.part, AN.t, true); key[field][n] = v; AN.selKey = { part: AN.part, key };
+  markDirty(false, true); unsavedAnim(); applyPose(); renderSliders(false); renderEase(); drawTimeline();
+}
+function unsavedAnim() { unsaved = true; $('saveState').textContent = 'modifications non enregistrées'; }
+function deleteSelKey() {
+  if (!AN.selKey) return; const tr = AN.anim.tracks[AN.selKey.part] || [];
+  const i = tr.indexOf(AN.selKey.key); if (i >= 0) tr.splice(i, 1); if (!tr.length) delete AN.anim.tracks[AN.selKey.part];
+  AN.selKey = null; unsavedAnim(); applyPose(); renderSliders(); renderEase(); drawTimeline();
+}
+// ----- poignées 3D -----
+const gizmo = new TransformControls(camera, renderer.domElement);
+gizmo.setSize(0.8); gizmo.setSpace('local');
+scene.add(gizmo.getHelper()); gizmo.getHelper().visible = false; gizmo.enabled = false;
+gizmo.addEventListener('dragging-changed', e => { controls.enabled = !e.value; });
+gizmo.addEventListener('objectChange', () => {
+  const r = rigParts[AN.part]; if (!r) return; const g = r.group;
+  const key = keyAt(AN.part, AN.t, true);
+  key.rot = [g.rotation.x / D2R, g.rotation.y / D2R, g.rotation.z / D2R].map(v => Math.round(v * 10) / 10);
+  key.pos = [g.position.x - r.base.x, g.position.y - r.base.y, g.position.z - r.base.z].map(v => Math.round(v * 100) / 100);
+  key.scl = [g.scale.x, g.scale.y, g.scale.z].map(v => Math.round(v * 100) / 100);
+  AN.selKey = { part: AN.part, key }; unsavedAnim(); renderSliders(false); renderEase(); drawTimeline();
+});
+document.querySelectorAll('[data-gm]').forEach(b => b.onclick = () => { gizmo.setMode(b.dataset.gm); document.querySelectorAll('[data-gm]').forEach(o => o.classList.toggle('on', o === b)); });
+function selectPart(k) {
+  AN.part = k; const r = rigParts[k]; if (r) gizmo.attach(r.group);
+  $('apPart').textContent = P.parts[k] ? 'Pièce : ' + P.parts[k].name : '—'; renderSliders(); drawTimeline();
+}
+function animPick(e) {
+  if (gizmo.dragging || gizmo.axis) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera);
+  const meshes = []; rigRoot && rigRoot.traverse(o => { if (o.isInstancedMesh) meshes.push(o); });
+  const h = ray.intersectObjects(meshes, false)[0]; if (h) selectPart(h.object.userData.part);
+}
+// ----- panneau : curseurs de la pièce -----
+function renderSliders(full = true) {
+  const el = $('apSliders'); if (!AN.anim || !P.parts[AN.part]) { el.innerHTML = ''; return; }
+  const p = evalPart(AN.anim, AN.part, AN.t), has = !!keyAt(AN.part, AN.t, false);
+  const rows = [['rot', 'Rotation', ['X', 'Y', 'Z'], -180, 180, 1, '°'], ['pos', 'Position', ['X', 'Y', 'Z'], -40, 40, 0.25, 'cubes'], ['scl', 'Échelle', ['X', 'Y', 'Z'], 0.1, 3, 0.01, '×']];
+  if (full || !el.children.length) {
+    el.innerHTML = rows.map(([f, name, ax, mn, mx, st, u]) => `<div class="small" style="margin-top:6px">${name} <span style="opacity:.7">(${u})</span></div>` +
+      ax.map((a, n) => `<div class="sl"><label>${a}</label><input type="range" data-f="${f}" data-n="${n}" min="${mn}" max="${mx}" step="${st}"><input type="number" data-f="${f}" data-n="${n}" step="${st}"></div>`).join('')).join('') +
+      `<p class="small" id="keyState"></p>`;
+    el.querySelectorAll('input').forEach(inp => inp.addEventListener('input', () => setPartValue(inp.dataset.f, +inp.dataset.n, +inp.value)));
+  }
+  el.querySelectorAll('input').forEach(inp => { if (document.activeElement !== inp) inp.value = +(+p[inp.dataset.f][+inp.dataset.n]).toFixed(2); });
+  $('keyState').textContent = has ? '◆ Clé à cet instant : les réglages la modifient.' : 'Pas de clé à cet instant : modifier un réglage en pose une.';
+}
+// ----- panneau : courbe de vitesse de la clé choisie -----
+function renderEase() {
+  const el = $('apEase');
+  const sk = AN.selKey && (AN.anim.tracks[AN.selKey.part] || []).includes(AN.selKey.key) ? AN.selKey : null;
+  if (!sk) { el.innerHTML = '<h4>Courbe de vitesse</h4><p class="small">Choisissez une clé (losange) dans la ligne de temps pour régler la façon dont la pièce va jusqu\'à la clé suivante.</p>'; return; }
+  const tr = AN.anim.tracks[sk.part], i = tr.indexOf(sk.key), next = tr[i + 1], e = sk.key.ease = sk.key.ease || { preset: 'smooth', bz: [0.65, 0, 0.35, 1] };
+  el.innerHTML = `<h4>Courbe de vitesse · ${escapeHtml(P.parts[sk.part].name)} · clé à ${sk.key.t.toFixed(2)} s</h4>
+    ${next ? `<div class="row"><label>Mouvement vers la clé suivante (${next.t.toFixed(2)} s)</label></div>` : '<p class="small">Dernière clé de la pièce : la courbe ne servira que si une clé est ajoutée après.</p>'}
+    <div class="row" style="align-items:flex-start;gap:10px"><canvas id="easeCv" width="200" height="150"></canvas>
+    <div style="display:flex;flex-direction:column;gap:3px">${EASES.filter(x => x.id !== 'custom').map(x => `<button data-ease="${x.id}" class="${e.preset === x.id ? 'on' : ''}">${x.name}</button>`).join('')}
+    <span class="small">${e.preset === 'custom' ? 'Courbe personnalisée' : 'Tirez les poignées pour personnaliser'}</span></div></div>
+    <div class="row"><button id="easeAll">Appliquer cette courbe à toutes les clés de la pièce</button></div>`;
+  el.querySelectorAll('[data-ease]').forEach(b => b.onclick = () => { const x = EASES.find(q => q.id === b.dataset.ease); e.preset = x.id; if (x.bz) e.bz = x.bz.slice(); unsavedAnim(); renderEase(); applyPose(); });
+  $('easeAll').onclick = () => { tr.forEach(k => k.ease = { preset: e.preset, bz: (e.bz || [0, 0, 1, 1]).slice() }); unsavedAnim(); toast('Courbe appliquée à toutes les clés de la pièce'); };
+  drawEase(e); bindEaseCanvas(e);
+}
+const EY0 = -0.6, EY1 = 1.6; // la courbe peut dépasser (élan) ou reculer (prise d'élan)
+const exy = (cv, x, y) => [10 + x * (cv.width - 20), cv.height - 10 - (y - EY0) / (EY1 - EY0) * (cv.height - 20)];
+function drawEase(e) {
+  const cv = $('easeCv'), g = cv.getContext('2d'); g.clearRect(0, 0, cv.width, cv.height);
+  g.strokeStyle = '#2a3242'; g.lineWidth = 1; g.beginPath(); for (const y of [0, 1]) { const [a, b] = exy(cv, 0, y), [c, d] = exy(cv, 1, y); g.moveTo(a, b); g.lineTo(c, d); } g.stroke();
+  g.fillStyle = '#9aa3b2'; g.font = '10px system-ui'; g.fillText('départ', 12, exy(cv, 0, 0)[1] + 11); g.fillText('arrivée', cv.width - 46, exy(cv, 1, 1)[1] - 4);
+  if (e.preset !== 'step') {
+    const [x1, y1, x2, y2] = e.bz; g.strokeStyle = '#4a5568'; g.beginPath();
+    let [a, b] = exy(cv, 0, 0); g.moveTo(a, b); [a, b] = exy(cv, x1, y1); g.lineTo(a, b); [a, b] = exy(cv, 1, 1); g.moveTo(a, b); [a, b] = exy(cv, x2, y2); g.lineTo(a, b); g.stroke();
+  }
+  g.strokeStyle = '#5fd16a'; g.lineWidth = 2.5; g.beginPath();
+  for (let k = 0; k <= 60; k++) { const u = k / 60, [a, b] = exy(cv, u, easeVal(e, u)); k ? g.lineTo(a, b) : g.moveTo(a, b); } g.stroke();
+  if (e.preset !== 'step') { g.fillStyle = '#ffd23a'; for (const [x, y] of [[e.bz[0], e.bz[1]], [e.bz[2], e.bz[3]]]) { const [a, b] = exy(cv, x, y); g.beginPath(); g.arc(a, b, 5, 0, 7); g.fill(); } }
+}
+function bindEaseCanvas(e) {
+  const cv = $('easeCv'); let drag = -1;
+  const toXY = ev => { const r = cv.getBoundingClientRect(), px = (ev.clientX - r.left) * cv.width / r.width, py = (ev.clientY - r.top) * cv.height / r.height; return [Math.min(1, Math.max(0, (px - 10) / (cv.width - 20))), EY0 + (cv.height - 10 - py) / (cv.height - 20) * (EY1 - EY0)]; };
+  cv.onpointerdown = ev => {
+    if (e.preset === 'step') { e.preset = 'custom'; e.bz = [0.65, 0, 0.35, 1]; }
+    const [x, y] = toXY(ev), d1 = Math.hypot(x - e.bz[0], (y - e.bz[1]) / 2.2), d2 = Math.hypot(x - e.bz[2], (y - e.bz[3]) / 2.2);
+    drag = d1 < d2 ? 0 : 1; cv.setPointerCapture(ev.pointerId); cv.onpointermove(ev);
+  };
+  cv.onpointermove = ev => { if (drag < 0) return; const [x, y] = toXY(ev); e.bz[drag * 2] = +x.toFixed(3); e.bz[drag * 2 + 1] = +Math.min(EY1, Math.max(EY0, y)).toFixed(3); e.preset = 'custom'; drawEase(e); applyPose(); unsavedAnim(); };
+  cv.onpointerup = () => { if (drag >= 0) { drag = -1; renderEase(); } };
+}
+// ----- liste des animations, réglages, repères -----
+function renderAnimList() {
+  const defs = animDefs(), el = $('animList'); el.innerHTML = '';
+  if (!AN.def || !defs.find(d => d.id === AN.def.id)) AN.def = defs[0];
+  defs.forEach(d => {
+    const b = document.createElement('button'), a = P.animations[d.id], n = a ? Object.values(a.tracks || {}).reduce((s, t) => s + t.length, 0) : 0;
+    b.textContent = d.name + (n ? '  ·  ' + n + ' clé' + (n > 1 ? 's' : '') : ''); b.classList.toggle('on', d.id === AN.def.id);
+    b.onclick = () => { openAnim(d); }; el.append(b);
+  });
+}
+function openAnim(d) {
+  AN.def = d; AN.anim = getAnim(d); AN.t = 0; AN.selKey = null; AN.playing = false; $('tlPlay').textContent = '▶';
+  $('anDur').value = AN.anim.duration; $('anDur').disabled = !!d.lock; $('anLoop').checked = !!AN.anim.loop;
+  $('anNote').textContent = d.lock || (d.loop ? 'Joue en boucle dans le jeu.' : 'Joue une fois dans le jeu.');
+  renderAnimList(); renderMarkers(); applyPose(); renderSliders(); renderEase(); drawTimeline();
+}
+$('anDur').oninput = e => { const v = Math.max(0.05, +e.target.value || 0.05); AN.anim.duration = v; unsavedAnim(); drawTimeline(); };
+$('anLoop').onchange = e => { AN.anim.loop = e.target.checked; unsavedAnim(); };
+function renderMarkers() {
+  const el = $('anMarkers'); el.innerHTML = '';
+  if (!AN.anim.markers.length) { el.innerHTML = '<p class="small">Aucun repère.</p>'; return; }
+  AN.anim.markers.forEach((m, k) => {
+    const d = document.createElement('div'); d.className = 'mk';
+    d.innerHTML = `<b style="color:${m.type === 'impact' ? '#ff6b4a' : '#4dabf7'}">${m.type === 'impact' ? 'Impact' : 'Tir'}</b> à <input type="number" step="${(1 / FPS).toFixed(3)}" min="0" value="${m.t}" style="width:62px"> s
+      ${m.type === 'shoot' ? `depuis <select>${P.parts.map((p, j) => `<option value="${j}" ${j === m.part ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select>` : ''}<button>×</button>`;
+    d.querySelector('input').oninput = e => { m.t = Math.max(0, +e.target.value); unsavedAnim(); drawTimeline(); };
+    const sel = d.querySelector('select'); if (sel) sel.onchange = e => { m.part = +e.target.value; unsavedAnim(); };
+    d.querySelector('button').onclick = () => { AN.anim.markers.splice(k, 1); unsavedAnim(); renderMarkers(); drawTimeline(); };
+    el.append(d);
+  });
+}
+$('mkAdd').onclick = () => { AN.anim.markers.push({ t: +AN.t.toFixed(3), type: $('mkType').value, part: AN.part }); unsavedAnim(); renderMarkers(); drawTimeline(); };
+// ----- copier / coller / miroir -----
+const mirrorName = n => { const sw = [['gauche', 'droite'], ['Gauche', 'Droite'], ['GAUCHE', 'DROITE'], ['left', 'right'], ['Left', 'Right']]; for (const [a, b] of sw) { if (n.includes(a)) return n.replace(a, b); if (n.includes(b)) return n.replace(b, a); } const m = n.match(/^(.*?)(\s|_|-)(G|D)$/); if (m) return m[1] + m[2] + (m[3] === 'G' ? 'D' : 'G'); return null; };
+function poseNow() { return P.parts.map((_, k) => { const p = evalPart(AN.anim, k, AN.t); return { rot: p.rot.slice(), pos: p.pos.slice(), scl: p.scl.slice() }; }); }
+function setPoseAll(pose) { pose.forEach((p, k) => { if (!P.parts[k]) return; const key = keyAt(k, AN.t, true); key.rot = p.rot.slice(); key.pos = p.pos.slice(); key.scl = p.scl.slice(); }); unsavedAnim(); applyPose(); renderSliders(); renderAnimList(); drawTimeline(); }
+$('poCopy').onclick = () => { AN.clip = poseNow(); toast('Pose copiée'); };
+$('poPaste').onclick = () => { if (!AN.clip) { toast('Aucune pose copiée'); return; } setPoseAll(AN.clip); toast('Pose collée'); };
+$('poKeyAll').onclick = () => setPoseAll(poseNow());
+$('poMirror').onclick = () => {
+  const cur = poseNow(), out = cur.map(() => null);
+  P.parts.forEach((p, k) => {
+    const mn = mirrorName(p.name), j = mn ? P.parts.findIndex(q => q.name === mn) : -1, src = cur[j >= 0 ? j : k];
+    out[k] = { rot: [src.rot[0], -src.rot[1], -src.rot[2]], pos: [-src.pos[0], src.pos[1], src.pos[2]], scl: src.scl.slice() };
+  });
+  setPoseAll(out); toast('Pose miroir (gauche ↔ droite)');
+};
+$('poReset').onclick = () => { const key = keyAt(AN.part, AN.t, true); Object.assign(key, ZERO(), { t: key.t, ease: key.ease }); unsavedAnim(); applyPose(); renderSliders(); drawTimeline(); };
+// ----- lecture -----
+function setTime(t) { AN.t = Math.max(0, Math.min(AN.anim.duration, t)); applyPose(); renderSliders(); drawTimeline(); }
+function stepFrame(d) { AN.playing = false; $('tlPlay').textContent = '▶'; setTime(snapT(AN.t + d / FPS)); }
+function togglePlay() { AN.playing = !AN.playing; $('tlPlay').textContent = AN.playing ? '⏸' : '▶'; if (AN.playing && AN.t >= AN.anim.duration - 1e-4) AN.t = 0; AN.last = performance.now(); }
+function allKeyTimes() { const s = new Set(); Object.values(AN.anim.tracks).forEach(tr => tr.forEach(k => s.add(+k.t.toFixed(4)))); return [...s].sort((a, b) => a - b); }
+$('tlPlay').onclick = togglePlay; $('tlPrev').onclick = () => stepFrame(-1); $('tlNext').onclick = () => stepFrame(1);
+$('tlStart').onclick = () => { AN.playing = false; $('tlPlay').textContent = '▶'; setTime(0); };
+$('tlEnd').onclick = () => { AN.playing = false; $('tlPlay').textContent = '▶'; setTime(AN.anim.duration); };
+$('tlPrevK').onclick = () => { const ts = allKeyTimes().filter(t => t < AN.t - 1e-4); if (ts.length) setTime(ts[ts.length - 1]); };
+$('tlNextK').onclick = () => { const ts = allKeyTimes().filter(t => t > AN.t + 1e-4); if (ts.length) setTime(ts[0]); };
+$('tlDelKey').onclick = deleteSelKey;
+function animTick(now) {
+  if (tabMode !== 'anim' || !AN.anim) return;
+  if (AN.playing) {
+    const dt = Math.min(0.1, (now - AN.last) / 1000); AN.last = now; AN.t += dt;
+    if (AN.t >= AN.anim.duration) { if ($('tlLoop').checked) AN.t %= Math.max(0.05, AN.anim.duration); else { AN.t = AN.anim.duration; AN.playing = false; $('tlPlay').textContent = '▶'; } }
+    applyPose(); drawTimeline(); renderSliders(false);
+  }
+}
+// ----- ligne de temps -----
+const tl = $('timeline'), NAMEW = 120, RULER = 24, ROWH = 22;
+let tlDrag = null;
+function tlLayout() { const W = tl.clientWidth, x0 = NAMEW, x1 = W - 12; return { W, x0, x1, tx: t => x0 + (t / AN.anim.duration) * (x1 - x0), xt: x => (x - x0) / (x1 - x0) * AN.anim.duration }; }
+function drawTimeline() {
+  if (tabMode !== 'anim' || !AN.anim) return;
+  const H = Math.max(120, RULER + 8 + ROWH * P.parts.length + 8); tl.style.height = Math.min(320, H) + 'px';
+  const dpr = Math.min(devicePixelRatio, 2), W = tl.clientWidth, Hc = tl.clientHeight;
+  if (tl.width !== Math.round(W * dpr) || tl.height !== Math.round(Hc * dpr)) { tl.width = Math.round(W * dpr); tl.height = Math.round(Hc * dpr); }
+  const g = tl.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, Hc); g.fillStyle = '#141820'; g.fillRect(0, 0, W, Hc);
+  const L = tlLayout(), dur = AN.anim.duration;
+  // règle
+  g.fillStyle = '#1a1f29'; g.fillRect(0, 0, W, RULER); g.font = '10px system-ui'; g.textBaseline = 'middle';
+  const step = dur > 4 ? 0.5 : dur > 1.5 ? 0.25 : 0.1;
+  for (let t = 0; t <= dur + 1e-6; t += 1 / FPS) {
+    const x = L.tx(t), f = Math.round(t * FPS), major = Math.abs(t / step - Math.round(t / step)) < 1e-3;
+    g.strokeStyle = major ? '#4a5568' : '#262d3a'; g.beginPath(); g.moveTo(x + .5, major ? 6 : 16); g.lineTo(x + .5, RULER); g.stroke();
+    if (major) { g.fillStyle = '#9aa3b2'; g.fillText(t.toFixed(2), x + 3, 9); }
+    if (W / (dur * FPS) > 14 && !major) { g.strokeStyle = '#1f2531'; g.beginPath(); g.moveTo(x + .5, RULER); g.lineTo(x + .5, Hc); g.stroke(); }
+  }
+  // repères
+  AN.anim.markers.forEach(m => { const x = L.tx(Math.min(m.t, dur)); g.fillStyle = m.type === 'impact' ? '#ff6b4a' : '#4dabf7'; g.fillRect(x - 1, 0, 3, Hc); g.fillText(m.type === 'impact' ? 'impact' : 'tir', x + 4, RULER - 7); });
+  // pistes
+  P.parts.forEach((p, k) => {
+    const y = RULER + 6 + k * ROWH;
+    if (k === AN.part) { g.fillStyle = 'rgba(95,209,106,.10)'; g.fillRect(0, y, W, ROWH); }
+    g.fillStyle = PART_TINTS[k % PART_TINTS.length]; g.fillRect(6, y + 7, 8, 8);
+    g.fillStyle = k === AN.part ? '#fff' : '#c5cbd6'; g.fillText(p.name.length > 14 ? p.name.slice(0, 13) + '…' : p.name, 20, y + ROWH / 2);
+    const tr = AN.anim.tracks[k] || [];
+    g.strokeStyle = '#3d475c'; g.beginPath(); for (let i = 0; i + 1 < tr.length; i++) { g.moveTo(L.tx(tr[i].t), y + ROWH / 2 + .5); g.lineTo(L.tx(tr[i + 1].t), y + ROWH / 2 + .5); } g.stroke();
+    tr.forEach(key => {
+      const x = L.tx(key.t), c = y + ROWH / 2, sel = AN.selKey && AN.selKey.key === key, r = sel ? 7 : 5.5;
+      g.fillStyle = sel ? '#ffd23a' : PART_TINTS[k % PART_TINTS.length]; g.beginPath(); g.moveTo(x, c - r); g.lineTo(x + r, c); g.lineTo(x, c + r); g.lineTo(x - r, c); g.closePath(); g.fill();
+      if (sel) { g.strokeStyle = '#fff'; g.stroke(); }
+    });
+  });
+  // curseur
+  const cx = L.tx(AN.t); g.fillStyle = '#ff4757'; g.fillRect(cx - 1, 0, 2, Hc); g.beginPath(); g.moveTo(cx - 6, 0); g.lineTo(cx + 6, 0); g.lineTo(cx, 8); g.fill();
+  $('tlTime').textContent = AN.t.toFixed(2) + ' s · image ' + Math.round(AN.t * FPS) + ' / ' + Math.round(dur * FPS);
+}
+function tlHit(ev) {
+  const r = tl.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top, L = tlLayout();
+  const row = Math.floor((y - RULER - 6) / ROWH);
+  if (y > RULER && row >= 0 && row < P.parts.length) {
+    const tr = AN.anim.tracks[row] || [], key = tr.find(k => Math.abs(L.tx(k.t) - x) < 7);
+    return { x, y, row, key, L };
+  }
+  return { x, y, row: -1, L };
+}
+tl.addEventListener('pointerdown', ev => {
+  const h = tlHit(ev); tl.setPointerCapture(ev.pointerId);
+  if (h.key) { AN.selKey = { part: h.row, key: h.key }; selectPart(h.row); tlDrag = { type: 'key', key: h.key, part: h.row }; setTime(h.key.t); renderEase(); return; }
+  if (h.row >= 0 && h.x < NAMEW) { selectPart(h.row); return; }
+  if (h.row >= 0) selectPart(h.row);
+  tlDrag = { type: 'scrub' }; AN.playing = false; $('tlPlay').textContent = '▶'; setTime(snapT(h.L.xt(h.x)));
+});
+tl.addEventListener('pointermove', ev => {
+  if (!tlDrag) return; const r = tl.getBoundingClientRect(), L = tlLayout(), t = snapT(Math.max(0, Math.min(AN.anim.duration, L.xt(ev.clientX - r.left))));
+  if (tlDrag.type === 'scrub') setTime(t);
+  else { const tr = AN.anim.tracks[tlDrag.part]; if (!tr.some(k => k !== tlDrag.key && Math.abs(k.t - t) < 0.5 / FPS)) { tlDrag.key.t = t; tr.sort((a, b) => a.t - b.t); unsavedAnim(); setTime(t); renderEase(); } }
+});
+tl.addEventListener('pointerup', () => { tlDrag = null; });
+addEventListener('resize', () => drawTimeline());
+// ----- entrée / sortie de l'onglet -----
+function enterAnim() {
+  buildRig(); gizmo.enabled = true; gizmo.getHelper().visible = true;
+  $('hint3d').textContent = 'Clic gauche : choisir une pièce · poignées : la faire bouger (clé automatique) · clic droit : tourner la vue · molette : zoom';
+  renderAnimList(); openAnim(AN.def && animDefs().find(d => d.id === AN.def.id) || animDefs()[0]); selectPart(Math.min(AN.part, P.parts.length - 1));
+}
+function exitAnim() { setTool(tool); if (rigRoot) rigRoot.visible = false; gizmo.detach(); gizmo.enabled = false; gizmo.getHelper().visible = false; AN.playing = false; }
+
 /* ============ Raccourcis ============ */
 addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || document.querySelector('dialog[open]')) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); return; }
+  if (tabMode === 'anim') {
+    if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); stepFrame(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); stepFrame(1); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelKey();
+    return;
+  }
   if (e.key === '[') setLayer(slice.layer - 1); else if (e.key === ']') setLayer(slice.layer + 1);
   else { const t = TOOLS.find(t => t[2].toLowerCase() === e.key.toLowerCase()); if (t && !e.ctrlKey && !e.metaKey) setTool(t[0]); }
 });
@@ -1031,7 +1488,7 @@ let toastT; function toast(msg) { const t = $('toast'); t.textContent = msg; t.c
   setTool('pencil'); syncBrushUI(); afterLoad(); unsaved = false; $('saveState').textContent = ok ? 'reprise de la dernière session' : '';
   resize(); requestAnimationFrame(loop); loadCatalog();
 })();
-window.__ed = { get P() { return P; }, occ: () => occ, applyAt, beginStroke, endStroke, undo, redo, serialize, deserialize, view, slice, buckets, setTool, fillInside, shape3D, brush, stats: () => stats };
+window.__ed = { AN, setTab, setTime: t => setTime(t), selectPart: k => selectPart(k), get P() { return P; }, occ: () => occ, applyAt, beginStroke, endStroke, undo, redo, serialize, deserialize, view, slice, buckets, setTool, fillInside, shape3D, brush, stats: () => stats };
 </script>
 </body>
 </html>

@@ -4,8 +4,6 @@
  "categories": {
   "monstres": "Monstres",
   "monstres/gelees": "Gelées",
-  "monstres/champignons": "Champignons",
-  "foret": "Forêt",
   "monstres/foret": "Forêt"
  },
  "creatures": [
