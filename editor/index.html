@@ -272,7 +272,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial, RANKS, MOVE_STYLES, BEHAVIORS, ATTACK_TYPES, defaultAttack, defaultSheet, completeSheet } from '../shared/look.js';
+import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial, RANKS, MOVE_STYLES, BEHAVIORS, ATTACK_TYPES, defaultAttack, defaultSheet, completeSheet, easeVal, evalPart, zeroPose } from '../shared/look.js';
 
 /* ============ Catalogues (types de cubes, textures, lumières : voir shared/look.js) ============ */
 const PART_TINTS = ['#ff6b6b', '#4dabf7', '#ffd43b', '#69db7c', '#da77f2', '#ffa94d', '#3bc9db', '#f783ac'];
@@ -1123,14 +1123,6 @@ const EASES = [
   { id: 'step', name: 'Palier (change d\'un coup)', step: true },
   { id: 'custom', name: 'Personnalisée' },
 ];
-function bezier(x, [x1, y1, x2, y2]) { // courbe de Bézier cubique (0,0)-(x1,y1)-(x2,y2)-(1,1), comme en CSS
-  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
-  const X = t => ((ax * t + bx) * t + cx) * t, dX = t => (3 * ax * t + 2 * bx) * t + cx, Y = t => ((ay * t + by) * t + cy) * t;
-  let t = x; for (let k = 0; k < 8; k++) { const e = X(t) - x, d = dX(t); if (Math.abs(e) < 1e-5) break; if (Math.abs(d) < 1e-6) break; t -= e / d; }
-  if (t < 0 || t > 1 || Math.abs(X(t) - x) > 1e-3) { let lo = 0, hi = 1; t = x; for (let k = 0; k < 30; k++) { if (X(t) < x) lo = t; else hi = t; t = (lo + hi) / 2; } }
-  return Y(t);
-}
-const easeVal = (ease, u) => !ease ? u : ease.preset === 'step' ? (u < 1 ? 0 : 1) : bezier(u, ease.bz || [0.65, 0, 0.35, 1]);
 function animDefs() {
   const L = [
     { id: 'idle', name: 'Repos', loop: true, dur: 2 }, { id: 'walk', name: 'Marche', loop: true, dur: 0.8 },
@@ -1202,14 +1194,7 @@ function buildRig() {
   AN.rigDirty = false;
 }
 // ----- évaluation d'une pose -----
-const ZERO = () => ({ rot: [0, 0, 0], pos: [0, 0, 0], scl: [1, 1, 1] });
-function evalPart(anim, k, t) {
-  const keys = (anim.tracks[k] || []); if (!keys.length) return ZERO();
-  if (t <= keys[0].t) return keys[0]; const last = keys[keys.length - 1]; if (t >= last.t) return last;
-  let i = 0; while (keys[i + 1].t < t) i++;
-  const a = keys[i], b = keys[i + 1], e = easeVal(a.ease, (t - a.t) / (b.t - a.t)), L = (u, v) => u + (v - u) * e;
-  return { rot: a.rot.map((v, n) => L(v, b.rot[n])), pos: a.pos.map((v, n) => L(v, b.pos[n])), scl: a.scl.map((v, n) => L(v, b.scl[n])) };
-}
+const ZERO = zeroPose;
 function applyPose() {
   if (!rigRoot || !AN.anim) return;
   rigParts.forEach((r, k) => {

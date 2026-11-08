@@ -89,7 +89,7 @@ export function decodeCreature(d) {
     const o = k * 10, b = j => bin.charCodeAt(o + j);
     out.push({ x: b(0), y: b(1), z: b(2), color: (b(3) << 16) | (b(4) << 8) | b(5), tex: mapT[b(6)] ?? 0, mat: mapM[b(7)] ?? 0, light: mapL[b(8)] ?? 0, part: b(9) });
   }
-  return { name: d.name, size: d.size, parts: d.parts || [], voxels: out };
+  return { name: d.name, size: d.size, parts: d.parts || [], animations: d.animations || {}, voxels: out };
 }
 
 /* ===== Fiche de créature (identité, déplacement, comportement, attaques, capacités) ===== */
@@ -125,3 +125,23 @@ export function completeSheet(s) {
   out.attacks = ((s || {}).attacks || []).map(a => ({ ...defaultAttack(a.type), ...a }));
   return out;
 }
+
+/* ===== Animations : courbes de vitesse et évaluation d'une pose (communes à l'éditeur et au jeu) ===== */
+export function bezier(x, [x1, y1, x2, y2]) { // courbe de Bézier cubique (0,0)-(x1,y1)-(x2,y2)-(1,1), comme en CSS
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx, cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const X = t => ((ax * t + bx) * t + cx) * t, dX = t => (3 * ax * t + 2 * bx) * t + cx, Y = t => ((ay * t + by) * t + cy) * t;
+  let t = x; for (let k = 0; k < 8; k++) { const e = X(t) - x, d = dX(t); if (Math.abs(e) < 1e-5) break; if (Math.abs(d) < 1e-6) break; t -= e / d; }
+  if (t < 0 || t > 1 || Math.abs(X(t) - x) > 1e-3) { let lo = 0, hi = 1; t = x; for (let k = 0; k < 30; k++) { if (X(t) < x) lo = t; else hi = t; t = (lo + hi) / 2; } }
+  return Y(t);
+}
+export const easeVal = (ease, u) => !ease ? u : ease.preset === 'step' ? (u < 1 ? 0 : 1) : bezier(u, ease.bz || [0.65, 0, 0.35, 1]);
+export const zeroPose = () => ({ rot: [0, 0, 0], pos: [0, 0, 0], scl: [1, 1, 1] });
+// pose d'une pièce (rotation en degrés, position en cubes, échelle) à l'instant t d'une animation
+export function evalPart(anim, k, t) {
+  const keys = (anim && anim.tracks && anim.tracks[k]) || []; if (!keys.length) return zeroPose();
+  if (t <= keys[0].t) return keys[0]; const last = keys[keys.length - 1]; if (t >= last.t) return last;
+  let i = 0; while (keys[i + 1].t < t) i++;
+  const a = keys[i], b = keys[i + 1], e = easeVal(a.ease, (t - a.t) / (b.t - a.t)), L = (u, v) => u + (v - u) * e;
+  return { rot: a.rot.map((v, n) => L(v, b.rot[n])), pos: a.pos.map((v, n) => L(v, b.pos[n])), scl: a.scl.map((v, n) => L(v, b.scl[n])) };
+}
+export const animUsable = a => !!(a && a.tracks && Object.values(a.tracks).some(t => t && t.length));

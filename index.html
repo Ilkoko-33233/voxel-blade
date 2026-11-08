@@ -34,7 +34,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { MATS, LIGHTS, makeAtlas, makeVoxelMaterial, decodeCreature, completeSheet } from './shared/look.js';
+import { MATS, LIGHTS, makeAtlas, makeVoxelMaterial, decodeCreature, completeSheet, evalPart, animUsable } from './shared/look.js';
 
 /* ================= Réglages ================= */
 const V = 0.04;               // taille d'un voxel (m)
@@ -433,16 +433,17 @@ function buildModelFromFile(dec) {
   const [nx, ny, nz] = dec.size, cx = (nx - 1) / 2, cz = (nz - 1) / 2, vs = dec.voxels, n = vs.length;
   let minJ = 1e9, maxJ = 0; for (const v of vs) { if (v.y < minJ) minJ = v.y; if (v.y > maxJ) maxJ = v.y; }
   const grid = new Int32Array(nx * ny * nz).fill(-1), pos = new Float32Array(n * 3), col = new Array(n), weak = new Uint8Array(n);
-  const vi = new Int16Array(n), vj = new Int16Array(n), vk = new Int16Array(n), matIdx = new Uint8Array(n), texIdx = new Uint8Array(n), litIdx = new Uint8Array(n);
+  const vi = new Int16Array(n), vj = new Int16Array(n), vk = new Int16Array(n), matIdx = new Uint8Array(n), texIdx = new Uint8Array(n), litIdx = new Uint8Array(n), vpart = new Uint8Array(n);
+  const nParts = Math.max(1, (dec.parts || []).length);
   vs.forEach((v, k) => {
     grid[v.x + nx * (v.y + ny * v.z)] = k;
     pos[k * 3] = (v.x - cx) * V; pos[k * 3 + 1] = (v.y - minJ + 0.5) * V; pos[k * 3 + 2] = (v.z - cz) * V;
     col[k] = v.color; matIdx[k] = v.mat; texIdx[k] = v.tex; litIdx[k] = v.light; weak[k] = MATS[v.mat].weak ? 1 : 0;
-    vi[k] = v.x; vj[k] = v.y; vk[k] = v.z;
+    vi[k] = v.x; vj[k] = v.y; vk[k] = v.z; vpart[k] = Math.min(v.part, nParts - 1);
   });
   const height = (maxJ - minJ + 1) * V;
   let radius = 0; for (let k = 0; k < n; k++) radius = Math.max(radius, Math.hypot(pos[k * 3], pos[k * 3 + 1] - height / 2, pos[k * 3 + 2]));
-  return { nx, ny, nz, cx, cz, grid, pos, col, weak, vi, vj, vk, count: n, height, radius: radius + V, matIdx, texIdx, litIdx, minJ, yOff: minJ };
+  return { nx, ny, nz, cx, cz, grid, pos, col, weak, vi, vj, vk, count: n, height, radius: radius + V, matIdx, texIdx, litIdx, minJ, yOff: minJ, vpart, parts: dec.parts || [] };
 }
 
 /* ================= Plaques d'informations ================= */
@@ -698,15 +699,27 @@ class Monster {
     // rendu : un maillage par type de lumière ; seuls les cubes de surface y prennent une place
     this.group = new THREE.Group(); scene.add(this.group);
     this.mat = { emissive: new THREE.Color(0xffffff), emissiveIntensity: 0 }; // éclat commun (coups, attaques), recopié sur chaque matière
-    const counts = new Array(LIGHTS.length).fill(0); for (let i = 0; i < n; i++) counts[m.litIdx[i]]++;
-    this.buckets = LIGHTS.map((L, k) => {
-      if (!counts[k]) return null;
-      const mat = makeVoxelMaterial(THREE, L.id, ATLAS), geo = boxGeo.clone();
-      geo.setAttribute('aTex', new THREE.InstancedBufferAttribute(new Float32Array(counts[k]), 1));
-      const mesh = new THREE.InstancedMesh(geo, mat, counts[k]); mesh.frustumCulled = false; mesh.count = 0;
+    // pièces (membres) : un groupe par pièce, placé à son pivot et rattaché à sa pièce parente
+    const defs = m.parts && m.parts.length ? m.parts : [{ name: 'Corps', parent: -1, pivot: [m.cx, m.minJ, m.cz] }];
+    this.vpart = m.vpart || new Uint8Array(n); this.multiPart = defs.length > 1;
+    this.parts = defs.map(p => ({ name: p.name, group: new THREE.Group(), base: new V3(), inv: new THREE.Matrix4(),
+      piv: new V3((p.pivot[0] - m.cx) * V, (p.pivot[1] - m.yOff + 0.5) * V, (p.pivot[2] - m.cz) * V), buckets: LIGHTS.map(() => null) }));
+    const parentOf = k => { let q = defs[k].parent, seen = new Set([k]); while (q >= 0 && q < defs.length) { if (seen.has(q)) return -1; seen.add(q); q = defs[q].parent; } return defs[k].parent >= 0 && defs[k].parent < defs.length ? defs[k].parent : -1; };
+    this.parts.forEach((P, k) => { const par = parentOf(k); P.base.copy(P.piv); if (par >= 0) P.base.sub(this.parts[par].piv); P.group.position.copy(P.base); });
+    this.parts.forEach((P, k) => { const par = parentOf(k); (par >= 0 ? this.parts[par].group : this.group).add(P.group); });
+    // matières de rendu partagées par toutes les pièces ; un maillage par (pièce, type de lumière)
+    this.lightMats = LIGHTS.map(L => makeVoxelMaterial(THREE, L.id, ATLAS));
+    const counts = this.parts.map(() => new Array(LIGHTS.length).fill(0)); for (let i = 0; i < n; i++) counts[this.vpart[i]][m.litIdx[i]]++;
+    this.parts.forEach((P, k) => LIGHTS.forEach((L, l) => {
+      const c = counts[k][l]; if (!c) return;
+      const geo = boxGeo.clone(); geo.setAttribute('aTex', new THREE.InstancedBufferAttribute(new Float32Array(c), 1));
+      const mesh = new THREE.InstancedMesh(geo, this.lightMats[l], c); mesh.frustumCulled = false; mesh.count = 0;
       mesh.setColorAt(0, _c.setHex(0xffffff)); if (L.id === 'translucent') mesh.renderOrder = 1;
-      this.group.add(mesh); return { mesh, mat, vox: new Int32Array(counts[k]) };
-    });
+      P.group.add(mesh); P.buckets[l] = { mesh, vox: new Int32Array(c) };
+    }));
+    // animations dessinées dans l'éditeur
+    this.anims = kind.animations || {}; this.hasAnims = Object.values(this.anims).some(animUsable);
+    this.an = { id: null, t: 0, from: null, blend: 1, hitT: 99 };
     this.slotOf = new Int32Array(n).fill(-1);
     this.alive = new Uint8Array(n); this.vel = new V3(); this.lastThud = 0; this.stun = 0; this.jy = 0; this.jv = 0; this.num = null; this.yaw = 0; this.phase = rnd() * 6;
     this.plate = new Plate(); this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0; this.wp = new V3();
@@ -728,23 +741,24 @@ class Monster {
       const x = a + p, y = b + q, z = c + r;
       if (x < 0 || y < 0 || z < 0 || x >= m.nx || y >= m.ny || z >= m.nz) return true;
       const o = m.grid[x + m.nx * (y + m.ny * z)];
-      if (o < 0 || !this.alive[o]) return true;
+      if (o < 0 || !this.alive[o] || this.vpart[o] !== this.vpart[i]) return true; // face contre une autre pièce : visible quand elle bouge
     }
     return false;
   }
+  bucketOf(i) { return this.parts[this.vpart[i]].buckets[this.model.litIdx[i]]; }
   writeMatrix(mesh, slot, i, scale) {
-    const a = mesh.instanceMatrix.array, o = slot * 16, p = this.model.pos;
+    const a = mesh.instanceMatrix.array, o = slot * 16, p = this.model.pos, pv = this.parts[this.vpart[i]].piv;
     a.fill(0, o, o + 16); a[o] = scale; a[o + 5] = scale; a[o + 10] = scale;
-    a[o + 12] = p[i * 3]; a[o + 13] = p[i * 3 + 1]; a[o + 14] = p[i * 3 + 2]; a[o + 15] = 1;
+    a[o + 12] = p[i * 3] - pv.x; a[o + 13] = p[i * 3 + 1] - pv.y; a[o + 14] = p[i * 3 + 2] - pv.z; a[o + 15] = 1;
     mesh.instanceMatrix.needsUpdate = true;
   }
   showSlot(i) {
-    const b = this.buckets[this.model.litIdx[i]], mesh = b.mesh, s = mesh.count++; this.slotOf[i] = s; b.vox[s] = i;
+    const b = this.bucketOf(i), mesh = b.mesh, s = mesh.count++; this.slotOf[i] = s; b.vox[s] = i;
     this.writeMatrix(mesh, s, i, V); mesh.setColorAt(s, this.colorFor(i)); mesh.instanceColor.needsUpdate = true;
     const t = mesh.geometry.attributes.aTex; t.array[s] = this.model.texIdx[i]; t.needsUpdate = true;
   }
   hideSlot(i) {
-    const b = this.buckets[this.model.litIdx[i]], mesh = b.mesh, s = this.slotOf[i], last = mesh.count - 1, j = b.vox[last];
+    const b = this.bucketOf(i), mesh = b.mesh, s = this.slotOf[i], last = mesh.count - 1, j = b.vox[last];
     if (s !== last) { // la dernière place vient boucher le trou
       mesh.instanceMatrix.array.copyWithin(s * 16, last * 16, last * 16 + 16);
       mesh.instanceColor.array.copyWithin(s * 3, last * 3, last * 3 + 3);
@@ -758,7 +772,7 @@ class Monster {
     const want = this.alive[i] && this.isSurface(i), has = this.slotOf[i] >= 0;
     if (want && !has) this.showSlot(i); else if (!want && has) this.hideSlot(i);
   }
-  recolor(i) { const s = this.slotOf[i]; if (s >= 0) { const mesh = this.buckets[this.model.litIdx[i]].mesh; mesh.setColorAt(s, this.colorFor(i)); mesh.instanceColor.needsUpdate = true; } }
+  recolor(i) { const s = this.slotOf[i]; if (s >= 0) { const mesh = this.bucketOf(i).mesh; mesh.setColorAt(s, this.colorFor(i)); mesh.instanceColor.needsUpdate = true; } }
   // à appeler après un changement de alive[i]
   setVoxel(i) {
     this.refreshVis(i);
@@ -769,11 +783,12 @@ class Monster {
       const o = m.grid[x + m.nx * (y + m.ny * z)]; if (o >= 0) this.refreshVis(o);
     }
   }
-  voxelWorld(i, out) { const p = this.model.pos; return out.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]).applyMatrix4(this.group.matrixWorld); }
+  voxelWorld(i, out) { const p = this.model.pos, P = this.parts[this.vpart[i]]; return out.set(p[i * 3] - P.piv.x, p[i * 3 + 1] - P.piv.y, p[i * 3 + 2] - P.piv.z).applyMatrix4(P.group.matrixWorld); }
   spawn() {
     const n = this.model.count; this.alive.fill(1);
     this.vhp.set(this.vmax); this.vSwing.fill(0); this.noRegrow.fill(0); this.damaged.clear();
-    for (const b of this.buckets) if (b) b.mesh.count = 0; this.slotOf.fill(-1);
+    for (const P of this.parts) for (const b of P.buckets) if (b) b.mesh.count = 0; this.slotOf.fill(-1);
+    this.an = { id: null, t: 0, from: null, blend: 1, hitT: 99 }; this.resetPose();
     for (let i = 0; i < n; i++) if (this.isSurface(i)) this.showSlot(i);
     this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
     if (this.kind.behavior === 'passive') { this.pickWaypoint(); this.group.position.copy(this.wp); this.pickWaypoint(); }
@@ -790,14 +805,21 @@ class Monster {
   // le joueur frappe ou bouscule cette créature
   onAttacked() {
     this.engagedUntil = time + PLATE_SHOW_TIME;
+    if (this.an && this.an.hitT > 0.15 && !this.atk) this.an.hitT = 0; // animation « coup reçu »
     if (this.kind.fleeOnHit ?? this.kind.behavior === 'passive') { this.fleeUntil = time + 3.5; this.wait = 0; }
   }
-  voxelAt(l) {
+  prepareHit() { for (const P of this.parts) P.inv.copy(P.group.matrixWorld).invert(); }
+  // cube touché par un point du monde : on teste chaque pièce dans son propre repère (les membres bougent)
+  voxelAtWorld(w) {
     const m = this.model;
-    const i = Math.round(l.x / V + m.cx), j = Math.floor(l.y / V) + m.yOff, k = Math.round(l.z / V + m.cz);
-    if (i < 0 || j < 0 || k < 0 || i >= m.nx || j >= m.ny || k >= m.nz) return -1;
-    const id = m.grid[i + m.nx * (j + m.ny * k)];
-    return id >= 0 && this.alive[id] ? id : -1;
+    for (let k = 0; k < this.parts.length; k++) {
+      const P = this.parts[k]; _l.copy(w).applyMatrix4(P.inv).add(P.piv);
+      const i = Math.round(_l.x / V + m.cx), j = Math.floor(_l.y / V) + m.yOff, z = Math.round(_l.z / V + m.cz);
+      if (i < 0 || j < 0 || z < 0 || i >= m.nx || j >= m.ny || z >= m.nz) continue;
+      const id = m.grid[i + m.nx * (j + m.ny * z)];
+      if (id >= 0 && this.alive[id] && this.vpart[id] === k) return id;
+    }
+    return -1;
   }
   addDamage(dmg, crit, worldPoint) {
     this.hp -= dmg;
@@ -897,6 +919,37 @@ class Monster {
       this.hp = Math.min(this.maxHp, this.hp + this.vmax[i] * (this.matOf(i).weak || 1));
     }
   }
+  strikeAnim(A) { return this.anims['atk' + (this.attacks.indexOf(A) + 1) + '_strike']; }
+  resetPose() { for (const P of this.parts) { P.group.position.copy(P.base); P.group.rotation.set(0, 0, 0); P.group.scale.set(1, 1, 1); } }
+  // choisit l'animation selon ce que fait la créature, avec un fondu court entre deux animations
+  animate(dt) {
+    if (!this.hasAnims) return;
+    const an = this.an, A = this.anims, ok = id => animUsable(A[id]);
+    an.hitT += dt;
+    let want = null;
+    if (this.state === 'dying') want = 'death';
+    else if (this.state === 'spawning' && ok('spawn')) want = 'spawn';
+    else if (this.atk) { const n = this.attacks.indexOf(this.atk.def) + 1, id = 'atk' + n + (this.atk.phase === 'wind' ? '_windup' : '_strike'); if (ok(id)) want = id; }
+    if (!want && ok('hit') && an.hitT < A.hit.duration) want = 'hit';
+    if (!want) want = this.moving && ok('walk') ? 'walk' : ok('idle') ? 'idle' : null;
+    if (want !== an.id) {
+      an.from = this.parts.map(P => ({ p: P.group.position.clone().sub(P.base).divideScalar(V), r: P.group.rotation.clone(), s: P.group.scale.clone() }));
+      an.id = want; an.blend = 0;
+      an.t = want === 'hit' ? an.hitT : (want && want.startsWith('atk') && this.atk) ? this.atk.t : 0;
+    } else an.t += dt;
+    an.blend = Math.min(1, an.blend + dt / 0.15);
+    const anim = want ? A[want] : null;
+    let t = an.t; if (anim) { if (anim.loop) t %= Math.max(0.05, anim.duration); else t = Math.min(t, anim.duration); }
+    if (want === 'hit') t = an.hitT; if (want && want.startsWith('atk') && this.atk) t = this.atk.t; if (want === 'death') t = this.dieT; if (want === 'spawn') t = this.t;
+    const D = Math.PI / 180, w = an.blend, f = an.from;
+    this.parts.forEach((P, k) => {
+      const p = anim ? evalPart(anim, k, t) : { rot: [0, 0, 0], pos: [0, 0, 0], scl: [1, 1, 1] };
+      let px = p.pos[0], py = p.pos[1], pz = p.pos[2], rx = p.rot[0] * D, ry = p.rot[1] * D, rz = p.rot[2] * D, sx = p.scl[0], sy = p.scl[1], sz = p.scl[2];
+      if (w < 1 && f && f[k]) { const q = f[k], L = (a, b) => a + (b - a) * w; px = L(q.p.x, px); py = L(q.p.y, py); pz = L(q.p.z, pz); rx = L(q.r.x, rx); ry = L(q.r.y, ry); rz = L(q.r.z, rz); sx = L(q.s.x, sx); sy = L(q.s.y, sy); sz = L(q.s.z, sz); }
+      P.group.position.set(P.base.x + px * V, P.base.y + py * V, P.base.z + pz * V);
+      P.group.rotation.set(rx, ry, rz); P.group.scale.set(sx || 1e-3, sy || 1e-3, sz || 1e-3);
+    });
+  }
   endAttack() { const A = this.atk ? this.atk.def : this.attacks[0]; this.atk = null; this.atkCd = A.cooldown[0] + rnd() * (A.cooldown[1] - A.cooldown[0]); }
   // attaques : toujours annoncées (préparation visible), parables avec n'importe quelle partie de l'épée
   updateAttack(dt) {
@@ -913,19 +966,27 @@ class Monster {
     if (a.phase === 'wind') {
       const k = Math.min(1, a.t / A.wind);
       this.mat.emissive.setHex(0xff7a2a); this.mat.emissiveIntensity = Math.max(this.mat.emissiveIntensity, 0.12 + 0.3 * k * Math.abs(Math.sin(a.t * 16)));
-      if (A.type === 'leap') g.scale.set(1 + 0.15 * k, 1 - 0.3 * k, 1 + 0.15 * k);
+      if (animUsable(this.anims['atk' + (this.attacks.indexOf(A) + 1) + '_windup'])) g.scale.set(1, 1, 1);
+      else if (A.type === 'leap') g.scale.set(1 + 0.15 * k, 1 - 0.3 * k, 1 + 0.15 * k);
       else { const p = 1 + 0.1 * k * Math.sin(a.t * 22); g.scale.set(p, 1 + 0.06 * k, p); }
       if (a.t >= A.wind) {
         g.scale.set(1, 1, 1);
         if (A.type === 'leap') { a.phase = 'leap'; a.t = 0; a.from = g.position.clone(); chestPos(a.to = new V3()); a.to.y = Math.max(0, a.to.y - this.model.height * 0.5); }
+        else if (animUsable(this.strikeAnim(A))) { a.phase = 'strike'; a.t = 0; a.shot = false; } // le tir part au repère « tir »
         else { this.spit(A); this.endAttack(); }
       }
       return A.type === 'leap';
     }
+    if (a.phase === 'strike') {
+      const S = this.strikeAnim(A), mk = (S.markers || []).find(q => q.type === 'shoot');
+      if (!a.shot && a.t >= (mk ? mk.t : 0)) { a.shot = true; this.spit(A, mk ? mk.part : null); }
+      if (a.t >= S.duration) this.endAttack();
+      return true;
+    }
     // bond
     const k = Math.min(1, a.t / A.dur);
     g.position.lerpVectors(a.from, a.to, k); g.position.y += Math.sin(k * Math.PI) * 0.35;
-    g.scale.set(0.9, 1.15, 0.9); g.updateMatrixWorld();
+    if (!animUsable(this.strikeAnim(A))) g.scale.set(0.9, 1.15, 0.9); g.updateMatrixWorld();
     _cen.set(0, this.model.height / 2, 0).applyMatrix4(g.matrixWorld);
     let ax = g.position.x - playerPos.x, az = g.position.z - playerPos.z; const al = Math.hypot(ax, az) || 1; ax /= al; az /= al;
     if (swordNear(_cen, this.model.radius * 0.85)) {                     // paré !
@@ -941,9 +1002,10 @@ class Monster {
     if (k >= 1) { this.jy = Math.max(0, g.position.y); this.jv = 0; g.scale.set(1, 1, 1); this.endAttack(); }  // esquivé : il retombe
     return true;
   }
-  spit(A) {
-    const g = this.group;
-    const from = new V3(0, this.model.height * 0.4, this.model.radius * 0.6).applyMatrix4(g.matrixWorld);
+  spit(A, part = null) {
+    const g = this.group; g.updateMatrixWorld();
+    const P = part != null && this.parts[part];
+    const from = P ? new V3().setFromMatrixPosition(P.group.matrixWorld) : new V3(0, this.model.height * 0.4, this.model.radius * 0.6).applyMatrix4(g.matrixWorld);
     chestPos(_h0); _h0.y += 0.1;
     spores.push(new Spore(from, _h0.sub(from).normalize().multiplyScalar(A.speed), A.dmg)); playSpit();
   }
@@ -1013,11 +1075,12 @@ class Monster {
     if (this.state === 'dead') { this.plate.update(dt, this, false, 0); this.timer -= dt; if (this.timer <= 0) this.spawn(); return; }
     const g = this.group;
     if (this.state === 'spawning') {
-      this.t += dt; g.scale.setScalar(Math.max(0.001, easeOutBack(Math.min(1, this.t / 0.6))));
-      if (this.t >= 0.6) { this.state = 'alive'; g.scale.setScalar(1); }
+      const spA = this.anims.spawn, custom = animUsable(spA), dur = custom ? Math.max(0.2, spA.duration) : 0.6;
+      this.t += dt; g.scale.setScalar(custom ? 1 : Math.max(0.001, easeOutBack(Math.min(1, this.t / 0.6))));
+      if (this.t >= dur) { this.state = 'alive'; g.scale.setScalar(1); }
     }
     if (this.stun > 0) this.stun -= dt;
-    const atkCtl = this.updateAttack(dt);
+    const atkCtl = this.state === 'dying' || this.updateAttack(dt);
     let mx = 0, mz = 0, step = 0;
     const spd = this.kind.speed ?? 1.1;
     if (atkCtl) { /* l'attaque contrôle le mouvement */ }
@@ -1061,7 +1124,10 @@ class Monster {
     let dy = want - this.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); this.yaw += dy * Math.min(1, dt * 6);
     g.rotation.y = this.yaw;
     // animation
-    if (this.state === 'alive' && !atkCtl && !this.atk) {
+    this.moving = moving;
+    const customMove = animUsable(this.anims[moving ? 'walk' : 'idle']);
+    if (this.state === 'alive' && !atkCtl && !this.atk && customMove) { g.position.y = this.jy; g.scale.set(1, 1, 1); g.rotation.z = 0; }
+    else if (this.state === 'alive' && !atkCtl && !this.atk) {
       this.phase += dt * (moving ? 8 : 3);
       if (this.kind.hop) {
         const h = Math.abs(Math.sin(this.phase));
@@ -1079,11 +1145,15 @@ class Monster {
     } else this.regenTimer = 0;
     this.mat.emissiveIntensity *= Math.exp(-dt * 14);
     if (!this.atk && this.mat.emissiveIntensity < 0.02) this.mat.emissive.setHex(0xffffff);
-    for (const b of this.buckets) if (b) { b.mat.emissive.copy(this.mat.emissive); b.mat.emissiveIntensity = this.mat.emissiveIntensity; }
+    for (const mt of this.lightMats) { mt.emissive.copy(this.mat.emissive); mt.emissiveIntensity = this.mat.emissiveIntensity; }
+    this.animate(dt);
     g.updateMatrixWorld();
     if (this.pendingDetach && time - this.lastHit > 0.12) { this.pendingDetach = false; this.checkDetached(); }
     if (this.num && time - this.lastHit > 0.35) { this.num.release(); this.num = null; }
-    if (this.state === 'alive' && (this.hp <= 0 || this.aliveCount <= 0)) { this.kill(); return; }
+    if (this.state === 'alive' && (this.hp <= 0 || this.aliveCount <= 0)) {
+      if (animUsable(this.anims.death)) { this.state = 'dying'; this.dieT = 0; this.atk = null; this.engagedUntil = -1; } else { this.kill(); return; }
+    }
+    if (this.state === 'dying') { this.dieT += dt; if (this.dieT >= this.anims.death.duration) { this.kill(); return; } }
     // plaque visible seulement pendant un échange de coups
     this.plate.update(dt, this, time < this.engagedUntil, g.position.y + this.model.height * g.scale.y);
   }
@@ -1100,7 +1170,7 @@ function sheetToKind(sheet, dec) {
     speed: +s.move.speed, hop: s.move.style === 'hop', glide: s.move.style === 'none',
     attacks: s.attacks.map(a => ({ type: a.type === 'leap' ? 'leap' : 'spit', dmg: +a.dmg, range: +a.range, wind: +a.windup, dur: +a.duration || 0.45, speed: +a.speed || 3.2, cooldown: [+a.cooldownMin, Math.max(+a.cooldownMin, +a.cooldownMax)] })),
     regen: rg.enabled ? { delay: +rg.delay, interval: cps >= 10 || !cps ? 0.1 : 1 / cps, perTick: cps >= 10 ? Math.round(cps / 10) : cps ? 1 : 0, heal: +rg.healPerSec || 0 } : null,
-    respawn: +s.spawn.respawn, core: null, shell: null, build: () => buildModelFromFile(dec),
+    respawn: +s.spawn.respawn, core: null, shell: null, animations: dec.animations || {}, build: () => buildModelFromFile(dec),
   };
 }
 const fetchJSON = async url => { const r = await fetch(url + '?v=' + Date.now()); if (!r.ok) throw new Error(url + ' : ' + r.status); return r.json(); };
@@ -1218,16 +1288,16 @@ function sweep(b0, t0, b1, t1) {
   for (const m of monsters) {
     if (m.state !== 'alive') continue;
     _cen.set(0, m.model.height / 2, 0).applyMatrix4(m.group.matrixWorld);
-    if (_cen.distanceTo(_mid) > m.model.radius * 1.2 + BLADE_LEN * 0.5 + move) continue;
-    _inv.copy(m.group.matrixWorld).invert();
+    if (_cen.distanceTo(_mid) > m.model.radius * (m.hasAnims ? 1.6 : 1.2) + BLADE_LEN * 0.5 + move) continue;
+    m.prepareHit();
     let hits = 0, intensity = 0, pushN = 0;
     cutVel.set(0, 0, 0); pushVel.set(0, 0, 0); pushPt.set(0, 0, 0);
     for (let s = 1; s <= steps; s++) {
       const f = s / steps; _b.lerpVectors(b0, b1, f); _t.lerpVectors(t0, t1, f);
       for (let a = 0; a <= along; a++) {
         const g = a / along;
-        _p.lerpVectors(_b, _t, g); _l.copy(_p).applyMatrix4(_inv);
-        const id = m.voxelAt(_l);
+        _p.lerpVectors(_b, _t, g);
+        const id = m.voxelAtWorld(_p);
         if (id < 0) continue;
         _sv.lerpVectors(baseVel, tipVel, g);
         const c = sampleCut(_sv);
