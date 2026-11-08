@@ -4,7 +4,9 @@
  "categories": {
   "monstres": "Monstres",
   "monstres/gelees": "Gelées",
-  "monstres/foret": "Forêt"
+  "monstres/foret": "Forêt",
+  "passif": "passif",
+  "passif/foret": "foret"
  },
  "creatures": [
   {
@@ -20,6 +22,14 @@
    "name": "Slime",
    "path": "monstres/gelees/slime.json",
    "rank": "monster",
+   "level": 1,
+   "spawnTest": true
+  },
+  {
+   "id": "vermini-bek4",
+   "name": "Vermini",
+   "path": "passif/foret/vermini.json",
+   "rank": "passive",
    "level": 1,
    "spawnTest": true
   }
