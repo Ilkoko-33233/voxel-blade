@@ -213,6 +213,23 @@
     </div>
     <p class="small" style="margin:6px 0 0">Chaque aspect s'active séparément. Texture utile + couleur = superposition.</p>
 
+    <h3>Calque (modèle 3D)</h3>
+    <div class="row"><button id="lyImport" style="flex:1" title="Choisis le fichier .stl, .glb ou .gltf (avec ses fichiers .bin et images pour un .gltf)">Importer STL / GLB / glTF…</button></div>
+    <input id="lyFile" type="file" accept=".stl,.glb,.gltf,.bin,.png,.jpg,.jpeg,.webp,.ktx2" multiple hidden>
+    <div id="lyBox" hidden>
+      <div class="small" id="lyName" style="margin:2px 0 4px"></div>
+      <div class="row"><label class="small" style="min-width:0"><input type="checkbox" id="lyShow" checked> modèle</label><input id="lyOpacity" type="range" min="0.05" max="1" step="0.05" value="0.45" style="flex:1" title="Opacité"></div>
+      <div class="row"><label>Hauteur</label><input id="lyH" type="number" step="4" min="4" style="width:64px"> <span class="small">cm</span><button id="lyFit" title="Recentre le modèle et le pose au sol">Ajuster</button></div>
+      <div class="row"><label>Position</label><input id="lyPx" type="number" step="0.5" style="width:48px"><input id="lyPy" type="number" step="0.5" style="width:48px"><input id="lyPz" type="number" step="0.5" style="width:48px"></div>
+      <div class="row"><label>Rotation °</label><input id="lyRx" type="number" step="15" style="width:48px"><input id="lyRy" type="number" step="15" style="width:48px"><input id="lyRz" type="number" step="15" style="width:48px"></div>
+      <div class="row"><label class="small" style="min-width:0"><input type="checkbox" id="lyBones" checked> créer les pièces depuis le squelette</label></div>
+      <div class="row"><button id="lyConvert" class="primary" style="flex:1">Convertir en cubes</button></div>
+      <div class="row"><label class="small" style="min-width:0"><input type="checkbox" id="lyCubes" checked> cubes du calque</label><span class="small" id="lyCount"></span></div>
+      <div class="row"><button id="lyMerge" style="flex:1">Fusionner tout</button><label class="small" style="min-width:0"><input type="checkbox" id="lyOver"> écraser</label></div>
+      <div class="row"><button id="lyClear" style="flex:1">Retirer le calque</button></div>
+      <p class="small" style="margin:2px 0 0">Les cubes du calque prennent le type de cube, la texture et la lumière du pinceau à la fusion. L'outil « Calque » (K) fusionne seulement les cubes visés.</p>
+    </div>
+
     <h3>Pièces (membres)</h3>
     <div id="parts"></div>
     <div class="row"><button id="bAddPart" style="flex:1">+ Nouvelle pièce</button></div>
@@ -272,6 +289,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial, RANKS, MOVE_STYLES, BEHAVIORS, ATTACK_TYPES, defaultAttack, defaultSheet, completeSheet, easeVal, evalPart, zeroPose } from '../shared/look.js';
 
 /* ============ Catalogues (types de cubes, textures, lumières : voir shared/look.js) ============ */
@@ -290,6 +311,7 @@ const idx = (x, y, z) => x + P.nx * (y + P.ny * z);
 const inB = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < P.nx && y < P.ny && z < P.nz;
 function alloc(nx, ny, nz) {
   const n = nx * ny * nz;
+  if (typeof layer !== 'undefined') resetLayerCubes(n);
   occ = new Uint8Array(n); col = new Uint32Array(n); tex = new Uint8Array(n); mat = new Uint8Array(n); lit = new Uint8Array(n); prt = new Uint8Array(n);
 }
 function newProject(name, nx, ny, nz) {
@@ -526,6 +548,10 @@ function pick3D(e) {
   const r = renderer.domElement.getBoundingClientRect();
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
+  if (tool === 'layer' && layer.mesh && layer.mesh.visible) {
+    const h = ray.intersectObject(layer.mesh, false)[0];
+    if (h) { const i = layer.meshCells[h.instanceId], x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny)); return { hit: [x, y, z], i, add: [x, y, z] }; }
+  }
   const hits = ray.intersectObjects(buckets.map(b => b.mesh), false);
   if (hits.length) {
     const h = hits[0], b = buckets.find(b => b.mesh === h.object), i = b.cells[h.instanceId];
@@ -560,7 +586,7 @@ renderer.domElement.addEventListener('pointerleave', () => { hover.visible = fal
 function act3D(p) {
   if (tool === 'pencil') { if (inB(...p.add)) applyAt(...p.add, 'add'); }
   else if (!p.hit) return;
-  else { const i = idx(...p.hit); if (i === last3D) return; last3D = i; applyAt(...p.hit, tool === 'eraser' ? 'erase' : tool === 'paint' ? 'paint' : tool === 'part' ? 'part' : 'none'); }
+  else { const i = idx(...p.hit); if (i === last3D) return; last3D = i; if (tool === 'layer') mergeAt(...p.hit); else applyAt(...p.hit, tool === 'eraser' ? 'erase' : tool === 'paint' ? 'paint' : tool === 'part' ? 'part' : 'none'); }
   markDirty(true);
 }
 
@@ -582,6 +608,7 @@ function drawSlice() {
     const [x, y, z] = uvToXYZ(u, v), px = offX + u * cellPx, py = offY + (nv - 1 - v) * cellPx;
     const i = idx(x, y, z);
     if (occ[i] && P.parts[prt[i]] && P.parts[prt[i]].visible) { sg.fillStyle = '#' + displayColor(i, tmpC).getHexString(); sg.fillRect(px, py, cellPx, cellPx); }
+    else if (layer.cubes && layer.occ && layer.occ[i]) { sg.globalAlpha = 0.5; sg.fillStyle = '#' + layer.col[i].toString(16).padStart(6, '0'); sg.fillRect(px + 1, py + 1, cellPx - 2, cellPx - 2); sg.globalAlpha = 1; }
     else if (ghostLayer >= 0) { const [gx, gy, gz] = uvToXYZ(u, v, ghostLayer), j = idx(gx, gy, gz); if (occ[j]) { sg.globalAlpha = 0.22; sg.fillStyle = '#' + displayColor(j, tmpC).getHexString(); sg.fillRect(px, py, cellPx, cellPx); sg.globalAlpha = 1; } }
   }
   if (cellPx >= 6) { // quadrillage
@@ -662,6 +689,7 @@ sc.addEventListener('pointerup', () => {
   if (drag2D) { drag2D = false; endStroke(); }
 });
 function act2D(c) {
+  if (tool === 'layer') { mergeAt(...uvToXYZ(...c)); markDirty(true); return; }
   const m = { pencil: 'add', eraser: 'erase', paint: 'paint', part: 'part' }[tool]; if (!m) return;
   applyAt(...uvToXYZ(...c), m); markDirty(true);
 }
@@ -670,13 +698,13 @@ function act2D(c) {
 const TOOLS = [
   ['pencil', 'Crayon', 'B'], ['eraser', 'Gomme', 'E'], ['paint', 'Peinture', 'P'], ['fill', 'Pot', 'G'],
   ['picker', 'Pipette', 'I'], ['line', 'Ligne', 'L'], ['rect', 'Rectangle', 'R'], ['ellipse', 'Ellipse', 'O'],
-  ['part', 'Pièce', 'M'],
+  ['part', 'Pièce', 'M'], ['layer', 'Calque', 'K'],
 ];
 const toolsEl = document.getElementById('tools');
 TOOLS.forEach(([id, name, key]) => { const b = document.createElement('button'); b.textContent = name; b.title = name + ' (' + key + ')'; b.dataset.tool = id; b.onclick = () => setTool(id); toolsEl.append(b); });
 function setTool(t) {
   tool = t; toolsEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
-  const h = { pencil: 'Crayon : ajoute un cube contre la face visée', eraser: 'Gomme : glisser pour effacer', paint: 'Peinture : repeint sans ajouter', fill: 'Pot : 3D = cubes reliés de même aspect · tranche = zone de la couche', picker: 'Pipette : copie le cube visé dans le pinceau', line: 'Ligne : dans la vue tranche', rect: 'Rectangle : dans la vue tranche', ellipse: 'Ellipse : dans la vue tranche', part: 'Pièce : range les cubes visés dans la pièce active', pivot: 'Cliquez pour placer le pivot de la pièce active' }[t];
+  const h = { pencil: 'Crayon : ajoute un cube contre la face visée', eraser: 'Gomme : glisser pour effacer', paint: 'Peinture : repeint sans ajouter', fill: 'Pot : 3D = cubes reliés de même aspect · tranche = zone de la couche', picker: 'Pipette : copie le cube visé dans le pinceau', line: 'Ligne : dans la vue tranche', rect: 'Rectangle : dans la vue tranche', ellipse: 'Ellipse : dans la vue tranche', part: 'Pièce : range les cubes visés dans la pièce active', layer: 'Calque : fusionne dans la créature les cubes du calque visés', pivot: 'Cliquez pour placer le pivot de la pièce active' }[t];
   document.getElementById('hint3d').textContent = h + ' · clic droit : tourner · molette : zoom · clic milieu : déplacer';
 }
 const $ = id => document.getElementById(id);
@@ -798,7 +826,7 @@ function markDirty(fast = false, viewOnly = false) { dirty3D = true; dirtySlice 
 let statsTimer = 0;
 function loop(t) {
   requestAnimationFrame(loop);
-  if (dirty3D) { rebuild3D(); dirty3D = false; }
+  if (dirty3D) { rebuild3D(); rebuildLayerMesh(); dirty3D = false; }
   if (dirtySlice) { drawSlice(); dirtySlice = false; }
   if (dirtyStats && t - statsTimer > 400) { statsTimer = t; renderStats(); dirtyStats = false; }
   animTick(t);
@@ -982,6 +1010,7 @@ function setTab(t) {
   $('slicePane').hidden = t !== 'model'; $('sheetPane').hidden = t !== 'sheet'; $('animPane').hidden = t !== 'anim';
   $('leftModel').hidden = t === 'anim'; $('leftAnim').hidden = t !== 'anim';
   const anim = t === 'anim'; world.visible = !anim; helpers.visible = !anim; pivotGroup.visible = !anim;
+  if (layer.mesh) layer.mesh.visible = !anim; layer.group.visible = !anim && !!layer.obj && $('lyShow').checked;
   if (anim) enterAnim(); else exitAnim();
   if (t === 'sheet') renderSheet(); resize();
 }
@@ -1445,6 +1474,200 @@ function enterAnim() {
 }
 function exitAnim() { setTool(tool); if (rigRoot) rigRoot.visible = false; gizmo.detach(); gizmo.enabled = false; gizmo.getHelper().visible = false; AN.playing = false; }
 
+/* ============ Calque : modèle 3D importé, converti en cubes ============ */
+const layer = { obj: null, group: new THREE.Group(), occ: null, col: null, part: null, bones: [], partMap: null, mesh: null, meshCells: null, cubes: true, name: '' };
+scene.add(layer.group);
+function resetLayerCubes(n) { layer.occ = new Uint8Array(n); layer.col = new Uint32Array(n); layer.part = new Uint8Array(n); layer.bones = []; layer.partMap = null; layer.count = 0; }
+resetLayerCubes(1);
+const gltfLoaderFor = manager => {
+  const l = new GLTFLoader(manager);
+  const draco = new DRACOLoader(); draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/'); l.setDRACOLoader(draco);
+  l.setMeshoptDecoder(MeshoptDecoder); return l;
+};
+$('lyImport').onclick = () => $('lyFile').click();
+$('lyFile').onchange = async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  const main = files.find(f => /\.(glb|gltf|stl)$/i.test(f.name)); if (!main) { toast('Choisis un fichier .stl, .glb ou .gltf'); return; }
+  const urls = new Map(files.map(f => [f.name, URL.createObjectURL(f)]));
+  try {
+    let obj;
+    if (/\.stl$/i.test(main.name)) {
+      const geo = new STLLoader().parse(await main.arrayBuffer()); geo.computeVertexNormals();
+      const m = new THREE.MeshStandardMaterial({ color: 0xb8b8b8, vertexColors: !!geo.hasColors }); obj = new THREE.Group(); obj.add(new THREE.Mesh(geo, m));
+    } else {
+      const manager = new THREE.LoadingManager(); manager.setURLModifier(u => { const name = decodeURIComponent(u.split('/').pop().split('?')[0]); return urls.get(name) || u; });
+      const gltf = await gltfLoaderFor(manager).loadAsync(urls.get(main.name)); obj = gltf.scene;
+    }
+    setLayerModel(obj, main.name);
+    toast('Modèle importé : ' + main.name);
+  } catch (err) { console.error(err); toast('Import impossible : ' + (err.message || err)); }
+};
+function setLayerModel(obj, name) {
+  if (layer.obj) layer.group.remove(layer.obj);
+  layer.obj = obj; layer.name = name; layer.group.add(obj); layer.group.rotation.set(0, 0, 0);
+  obj.traverse(o => { if (o.isMesh) { o.material = (Array.isArray(o.material) ? o.material : [o.material]).map(m => { const c = m.clone(); c.userData.orig = m; return c; }); if (o.material.length === 1) o.material = o.material[0]; o.frustumCulled = false; } });
+  applyLayerOpacity(); fitLayer(Math.round(P.ny * 0.85)); $('lyBox').hidden = false; $('lyName').textContent = name;
+}
+function applyLayerOpacity() {
+  const op = +$('lyOpacity').value;
+  layer.obj && layer.obj.traverse(o => { if (o.isMesh) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { m.transparent = op < 1; m.opacity = op; m.depthWrite = op >= 1; }); });
+  layer.group.visible = $('lyShow').checked;
+}
+function fitLayer(hCubes) { // pose le modèle au sol, centré, à la hauteur voulue
+  const g = layer.group; g.position.set(0, 0, 0); g.scale.setScalar(1); g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(layer.obj), h = (bb.max.y - bb.min.y) || 1, s = hCubes / h;
+  g.scale.setScalar(s); g.position.set(-(bb.min.x + bb.max.x) / 2 * s, -bb.min.y * s, -(bb.min.z + bb.max.z) / 2 * s);
+  syncLayerUI();
+}
+function layerHeightCubes() { layer.group.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(layer.obj); return bb.max.y - bb.min.y; }
+function syncLayerUI() {
+  const g = layer.group, r = v => Math.round(v * 100) / 100;
+  $('lyH').value = Math.round(layerHeightCubes() * 4); $('lyPx').value = r(g.position.x); $('lyPy').value = r(g.position.y); $('lyPz').value = r(g.position.z);
+  $('lyRx').value = Math.round(g.rotation.x / D2R); $('lyRy').value = Math.round(g.rotation.y / D2R); $('lyRz').value = Math.round(g.rotation.z / D2R);
+}
+$('lyShow').onchange = applyLayerOpacity; $('lyOpacity').oninput = applyLayerOpacity;
+$('lyFit').onclick = () => layer.obj && fitLayer(Math.max(1, (+$('lyH').value || 40) / 4));
+$('lyH').onchange = () => layer.obj && fitLayer(Math.max(1, (+$('lyH').value || 40) / 4));
+['x', 'y', 'z'].forEach(a => {
+  $('lyP' + a).oninput = e => { layer.group.position[a] = +e.target.value; };
+  $('lyR' + a).onchange = e => { layer.group.rotation[a] = (+e.target.value) * D2R; fitLayer(Math.max(1, (+$('lyH').value || 40) / 4)); };
+});
+$('lyCubes').onchange = e => { layer.cubes = e.target.checked; markDirty(true, true); };
+$('lyClear').onclick = () => { if (layer.obj) layer.group.remove(layer.obj); layer.obj = null; resetLayerCubes(occ.length); $('lyBox').hidden = true; markDirty(true, true); };
+// ----- conversion en cubes (coque seulement, couleurs du modèle) -----
+const texCache = new Map();
+function texPixels(t) {
+  if (!t || !t.image) return null; if (texCache.has(t)) return texCache.get(t);
+  const im = t.image, w0 = im.width || im.videoWidth, h0 = im.height || im.videoHeight; if (!w0 || !h0) return null;
+  const sc = Math.min(1, 512 / Math.max(w0, h0)), w = Math.max(1, Math.round(w0 * sc)), h = Math.max(1, Math.round(h0 * sc));
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d', { willReadFrequently: true });
+  try { g.drawImage(im, 0, 0, w, h); } catch (e) { return null; }
+  const out = { w, h, d: g.getImageData(0, 0, w, h).data, flipY: t.flipY }; texCache.set(t, out); return out;
+}
+function convertLayer() {
+  if (!layer.obj) return;
+  const n = occ.length; resetLayerCubes(n);
+  const sum = new Float32Array(n * 3), cnt = new Uint16Array(n), boneOf = new Int32Array(n).fill(-1), bones = [];
+  layer.group.updateMatrixWorld(true);
+  const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3(), q = new THREE.Vector3(), mc = new THREE.Color(), vcol = new THREE.Color();
+  const ox = P.nx / 2, oz = P.nz / 2;
+  layer.obj.traverse(mesh => {
+    if (!mesh.isMesh || !mesh.geometry || !mesh.geometry.attributes.position) return;
+    const geo = mesh.geometry, pos = geo.attributes.position, uv = geo.attributes.uv, colA = geo.attributes.color, index = geo.index;
+    const sIdx = mesh.isSkinnedMesh && geo.attributes.skinIndex, sW = mesh.isSkinnedMesh && geo.attributes.skinWeight;
+    const mats = Array.isArray(mesh.material) ? mesh.material.map(m => m.userData.orig || m) : [mesh.material.userData.orig || mesh.material];
+    const groups = geo.groups.length ? geo.groups : [{ start: 0, count: index ? index.count : pos.count, materialIndex: 0 }];
+    const W = mesh.matrixWorld, triCount = (index ? index.count : pos.count) / 3;
+    const vid = k => index ? index.getX(k) : k;
+    for (const gr of groups) {
+      const mt = mats[gr.materialIndex] || mats[0]; if (!mt) continue;
+      mc.copy(mt.color || new THREE.Color(1, 1, 1)).convertLinearToSRGB();
+      const tp = texPixels(mt.map);
+      for (let t = gr.start / 3; t < Math.min(triCount, (gr.start + gr.count) / 3); t++) {
+        const ia = vid(t * 3), ib = vid(t * 3 + 1), ic = vid(t * 3 + 2);
+        // position telle qu'affichée (squelette et morphoses appliqués)
+        mesh.getVertexPosition(ia, va).applyMatrix4(W); mesh.getVertexPosition(ib, vb).applyMatrix4(W); mesh.getVertexPosition(ic, vc).applyMatrix4(W);
+        const steps = Math.min(200, Math.max(1, Math.ceil(Math.max(va.distanceTo(vb), vb.distanceTo(vc), vc.distanceTo(va)) / 0.4)));
+        for (let i = 0; i <= steps; i++) for (let j = 0; j <= steps - i; j++) {
+          const a = i / steps, b = j / steps, c = 1 - a - b;
+          q.set(va.x * c + vb.x * a + vc.x * b, va.y * c + vb.y * a + vc.y * b, va.z * c + vb.z * a + vc.z * b);
+          const x = Math.floor(q.x + ox), y = Math.floor(q.y), z = Math.floor(q.z + oz); if (!inB(x, y, z)) continue;
+          const cell = idx(x, y, z);
+          let r = mc.r, g = mc.g, bl = mc.b;
+          if (tp && uv) {
+            let u = uv.getX(ia) * c + uv.getX(ib) * a + uv.getX(ic) * b, v = uv.getY(ia) * c + uv.getY(ib) * a + uv.getY(ic) * b;
+            u -= Math.floor(u); v -= Math.floor(v); if (tp.flipY) v = 1 - v;
+            const px = Math.min(tp.w - 1, Math.floor(u * tp.w)), py = Math.min(tp.h - 1, Math.floor(v * tp.h)), o = (py * tp.w + px) * 4;
+            r *= tp.d[o] / 255; g *= tp.d[o + 1] / 255; bl *= tp.d[o + 2] / 255;
+          }
+          if (colA && (mt.vertexColors || mesh.material.vertexColors)) {
+            vcol.setRGB(colA.getX(ia) * c + colA.getX(ib) * a + colA.getX(ic) * b, colA.getY(ia) * c + colA.getY(ib) * a + colA.getY(ic) * b, colA.getZ(ia) * c + colA.getZ(ib) * a + colA.getZ(ic) * b).convertLinearToSRGB();
+            r *= vcol.r; g *= vcol.g; bl *= vcol.b;
+          }
+          sum[cell * 3] += r; sum[cell * 3 + 1] += g; sum[cell * 3 + 2] += bl; cnt[cell]++;
+          if (sIdx) { // os qui influence le plus le sommet le plus proche
+            const vv = c >= a && c >= b ? ia : a >= b ? ib : ic; let bi = 0, bw = -1;
+            for (let k = 0; k < 4; k++) { const w = sW.getComponent(vv, k); if (w > bw) { bw = w; bi = sIdx.getComponent(vv, k); } }
+            const bone = mesh.skeleton.bones[bi]; if (bone) { let id = bones.indexOf(bone); if (id < 0) { bones.push(bone); id = bones.length - 1; } boneOf[cell] = id; }
+          }
+        }
+      }
+    }
+  });
+  let k = 0;
+  for (let i = 0; i < n; i++) if (cnt[i]) {
+    layer.occ[i] = 1; k++;
+    const r = Math.round(255 * Math.min(1, sum[i * 3] / cnt[i])), g = Math.round(255 * Math.min(1, sum[i * 3 + 1] / cnt[i])), b = Math.round(255 * Math.min(1, sum[i * 3 + 2] / cnt[i]));
+    layer.col[i] = (r << 16) | (g << 8) | b;
+  }
+  layer.count = k;
+  if ($('lyBones').checked && bones.length) buildLayerBones(bones, boneOf);
+  $('lyCount').textContent = k.toLocaleString('fr-FR') + ' cubes' + (layer.bones.length ? ' · ' + layer.bones.length + ' pièces' : '');
+  markDirty(true, true);
+  toast(k ? 'Converti : ' + k.toLocaleString('fr-FR') + ' cubes' + (layer.bones.length ? ', ' + layer.bones.length + ' pièces' : '') : 'Aucun cube : le modèle est-il dans la grille ?');
+}
+// squelette → pièces : un os = une pièce ; les os qui ne portent presque rien rejoignent leur parent
+function buildLayerBones(bones, boneOf) {
+  const n = boneOf.length, count = new Array(bones.length).fill(0); for (let i = 0; i < n; i++) if (layer.occ[i] && boneOf[i] >= 0) count[boneOf[i]]++;
+  const used = new Set(bones.map((_, k) => k).filter(k => count[k] > 0));
+  const usedAncestor = k => { let o = bones[k].parent; while (o && o.isBone) { const j = bones.indexOf(o); if (j >= 0 && used.has(j)) return j; o = o.parent; } return -1; };
+  const remap = new Array(bones.length).fill(-1).map((_, k) => k);
+  for (; ;) {
+    let best = -1; for (const k of used) if (best < 0 || count[k] < count[best]) best = k;
+    if (best < 0 || (count[best] >= 20 && used.size <= 24)) break;
+    const up = usedAncestor(best); if (up < 0) { if (used.size <= 24) break; else { used.delete(best); continue; } }
+    count[up] += count[best]; count[best] = 0; used.delete(best); remap.forEach((v, k) => { if (v === best) remap[k] = up; }); remap[best] = up;
+  }
+  const list = [...used], ix = new Map(list.map((b, k) => [b, k]));
+  const final = k => { let v = remap[k]; while (remap[v] !== v) v = remap[v]; return v; };
+  for (let i = 0; i < n; i++) if (layer.occ[i]) { const b = boneOf[i] >= 0 ? final(boneOf[i]) : -1; layer.part[i] = ix.has(b) ? ix.get(b) : 0; }
+  const w = new THREE.Vector3();
+  layer.bones = list.map(b => {
+    const bone = bones[b]; bone.getWorldPosition(w);
+    const pv = [Math.floor(w.x + P.nx / 2), Math.floor(w.y), Math.floor(w.z + P.nz / 2)].map((v, a) => Math.max(0, Math.min([P.nx, P.ny, P.nz][a] - 1, v)));
+    const up = usedAncestor(b);
+    return { name: (bone.name || 'Os').replace(/^mixamorig:?/i, '').slice(0, 30), parent: up >= 0 && ix.has(up) ? ix.get(up) : -1, pivot: pv };
+  });
+  layer.partMap = null;
+}
+// pièces de la créature correspondant aux os du calque (créées à la première fusion)
+function ensureLayerParts() {
+  if (!layer.bones.length) return null; if (layer.partMap) return layer.partMap;
+  const room = 32 - P.parts.length; if (room <= 0) { toast('Trop de pièces : les cubes vont dans la pièce active'); return null; }
+  const map = layer.bones.map((b, k) => k < room ? P.parts.length + k : activePart);
+  layer.bones.slice(0, room).forEach(b => P.parts.push({ name: b.name, parent: -1, pivot: b.pivot.slice(), visible: true }));
+  layer.bones.slice(0, room).forEach((b, k) => { const pi = map[k]; P.parts[pi].parent = b.parent >= 0 && map[b.parent] !== activePart ? map[b.parent] : -1; });
+  layer.partMap = map; renderParts(); rebuildPivots(); return map;
+}
+function mergeCell(i, map, over) {
+  if (!layer.occ[i] || (occ[i] && !over)) return;
+  touch(i); occ[i] = 1; col[i] = layer.col[i]; tex[i] = brush.tex; mat[i] = brush.mat; lit[i] = brush.light; prt[i] = map ? map[layer.part[i]] : activePart;
+}
+function mergeAt(x, y, z) { const map = ensureLayerParts(), over = $('lyOver').checked; for (const [a, b, c] of mirrors(x, y, z)) if (inB(a, b, c)) mergeCell(idx(a, b, c), map, over); }
+$('lyConvert').onclick = () => { if (!layer.obj) return; $('lyConvert').disabled = true; $('lyConvert').textContent = 'Conversion…'; setTimeout(() => { try { convertLayer(); } finally { $('lyConvert').disabled = false; $('lyConvert').textContent = 'Convertir en cubes'; } }, 30); };
+$('lyMerge').onclick = () => {
+  if (!layer.count) { toast('Convertis d\'abord le modèle en cubes'); return; }
+  const map = ensureLayerParts(), over = $('lyOver').checked; beginStroke();
+  for (let i = 0; i < occ.length; i++) mergeCell(i, map, over);
+  endStroke(); markDirty(true); renderParts(); toast('Calque fusionné dans la créature');
+};
+function rebuildLayerMesh() {
+  if (layer.mesh) { scene.remove(layer.mesh); layer.mesh.dispose(); layer.mesh = null; }
+  if (!layer.cubes || !layer.count) return;
+  const cells = []; for (let i = 0; i < layer.occ.length; i++) if (layer.occ[i] && !occ[i]) {
+    if (slice.clip) { const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny)), c = slice.axis === 'x' ? x : slice.axis === 'y' ? y : z; if (c > slice.layer) continue; }
+    cells.push(i);
+  }
+  if (!cells.length) return;
+  const mesh = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial({ transparent: true, opacity: 0.8 }), cells.length), m4 = new THREE.Matrix4();
+  cells.forEach((i, s) => {
+    const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny));
+    m4.makeScale(0.82, 0.82, 0.82).setPosition(x + 0.5 - P.nx / 2, y + 0.5, z + 0.5 - P.nz / 2); mesh.setMatrixAt(s, m4);
+    mesh.setColorAt(s, tmpC.setHex(view.parts && layer.bones.length ? new THREE.Color(PART_TINTS[layer.part[i] % PART_TINTS.length]).getHex() : layer.col[i]));
+  });
+  mesh.frustumCulled = false; layer.mesh = mesh; layer.meshCells = cells; mesh.visible = tabMode !== 'anim'; scene.add(mesh);
+}
+
 /* ============ Raccourcis ============ */
 addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || document.querySelector('dialog[open]')) return;
@@ -1473,7 +1696,7 @@ let toastT; function toast(msg) { const t = $('toast'); t.textContent = msg; t.c
   setTool('pencil'); syncBrushUI(); afterLoad(); unsaved = false; $('saveState').textContent = ok ? 'reprise de la dernière session' : '';
   resize(); requestAnimationFrame(loop); loadCatalog();
 })();
-window.__ed = { AN, setTab, setTime: t => setTime(t), selectPart: k => selectPart(k), get P() { return P; }, occ: () => occ, applyAt, beginStroke, endStroke, undo, redo, serialize, deserialize, view, slice, buckets, setTool, fillInside, shape3D, brush, stats: () => stats };
+window.__ed = { layer, setLayerModel, convertLayer, AN, setTab, setTime: t => setTime(t), selectPart: k => selectPart(k), get P() { return P; }, occ: () => occ, applyAt, beginStroke, endStroke, undo, redo, serialize, deserialize, view, slice, buckets, setTool, fillInside, shape3D, brush, stats: () => stats };
 </script>
 </body>
 </html>
