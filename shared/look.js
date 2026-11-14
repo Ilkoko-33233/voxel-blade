@@ -12,12 +12,18 @@ export const MATS = [
   { id: 'fur',   name: 'Fourrure', hp: 25,  color: '#a1887f', regen: false, look: 'dark', info: '' },
   { id: 'wood',  name: 'Bois',     hp: 70,  color: '#c07a3a', regen: false, look: 'dark', info: '' },
   { id: 'stone', name: 'Pierre',   hp: 120, color: '#90a4ae', regen: false, look: 'pale', info: '' },
+  { id: 'earth', name: 'Terre',    hp: 50,  color: '#8d6e4a', regen: false, look: 'dark', info: '' },
+  { id: 'brick', name: 'Brique',   hp: 90,  color: '#c0583a', regen: false, look: 'dark', info: '' },
+  { id: 'metal', name: 'Métal',    hp: 200, color: '#b0bec5', regen: false, look: 'pale', info: '' },
 ];
 
 export const TEXTURES = [
   { id: 'none', name: 'Aucune' }, { id: 'grain', name: 'Grain' }, { id: 'scales', name: 'Écailles' },
   { id: 'wood', name: 'Bois' }, { id: 'stone', name: 'Pierre' }, { id: 'cracks', name: 'Fissures' },
   { id: 'dots', name: 'Points' }, { id: 'stripes', name: 'Rayures' }, { id: 'fabric', name: 'Tissu' },
+  // motifs « grand format » : couvrent toute la face d'un bloc de 24 cm (salles), au lieu de se répéter 6 × 6
+  { id: 'bricks', name: 'Briques (grand format)', span: true }, { id: 'tiles', name: 'Dalles (grand format)', span: true },
+  { id: 'planks', name: 'Planches (grand format)', span: true },
 ];
 
 export const LIGHTS = [
@@ -46,6 +52,9 @@ export function texValue(id, x, y) {
     case 'dots': { const cx = (x % 8) - 3.5, cy = (y % 8) - 3.5; return cx * cx + cy * cy < 4.5 ? 0.68 : 1; }
     case 'stripes': return ((x + y) % 8) < 3 ? 0.75 : 1;
     case 'fabric': { const a = (x % 4) < 2, b = (y % 4) < 2; return (a !== b ? 0.8 : 0.96) - 0.04 * n; }
+    case 'bricks': { const row = Math.floor(y / 8), off = (row % 2) * 8, mortar = (y % 8) === 7 || ((x + off) % 16) === 15; return mortar ? 0.55 : 0.82 + 0.12 * smoothNoise(x / 4, y / 4, row + 17) + 0.04 * n; }
+    case 'tiles': { const e = (x % 16) === 0 || (y % 16) === 0; return e ? 0.6 : 0.86 + 0.08 * smoothNoise(x / 5, y / 5, 23) + 0.04 * n; }
+    case 'planks': { const board = Math.floor(x / 8), seam = (x % 8) === 7 || ((y + board * 11) % 32) === 0; return seam ? 0.55 : 0.8 + 0.1 * Math.sin((y + smoothNoise(board, y / 10, 29) * 8) * 0.6) + 0.04 * n; }
   }
   return 1;
 }
@@ -63,18 +72,25 @@ export function makeAtlas(THREE, canvas = makeAtlasCanvas()) {
 }
 
 /* ===== Matière de rendu pour une « lumière » donnée (attribut d'instance aTex = n° de motif) ===== */
-export function makeVoxelMaterial(THREE, lightId, atlas) {
-  const NT = TEXTURES.length;
+export function makeVoxelMaterial(THREE, lightId, atlas, opts = {}) {
+  const NT = TEXTURES.length, rep = opts.repeat || 1;
   const m = new THREE.MeshStandardMaterial({ map: atlas, roughness: 1, metalness: 0 });
   if (lightId === 'glossy') m.roughness = 0.18;
   if (lightId === 'metal') { m.roughness = 0.3; m.metalness = 0.9; }
   if (lightId === 'translucent') { m.transparent = true; m.opacity = 0.6; m.roughness = 0.25; m.depthWrite = false; }
   m.onBeforeCompile = sh => {
+    if (rep > 1) { // blocs de salle : chaque motif se répète rep × rep fois par face (sauf les motifs grand format)
+      sh.uniforms.uRep = { value: TEXTURES.map(t => t.span ? 1 : rep) };
+      sh.vertexShader = 'attribute float aTex;\nvarying vec2 vRepUv;\nvarying float vTexId;\nuniform float uRep[' + NT + '];\n' + sh.vertexShader.replace('#include <uv_vertex>',
+        '#include <uv_vertex>\n vTexId = aTex; vRepUv = uv * uRep[int(aTex + 0.5)];');
+      sh.fragmentShader = 'varying vec2 vRepUv;\nvarying float vTexId;\n' + sh.fragmentShader.replace('#include <map_fragment>',
+        '#ifdef USE_MAP\n vec2 vbUv = (min(fract(vRepUv), vec2(0.999)) + vec2(vTexId, 0.0)) * vec2(' + (1 / NT).toFixed(8) + ', 1.0);\n diffuseColor *= texture2D(map, vbUv);\n#endif');
+    } else
     sh.vertexShader = 'attribute float aTex;\n' + sh.vertexShader.replace('#include <uv_vertex>',
       '#include <uv_vertex>\n#ifdef USE_MAP\n vMapUv = (vMapUv + vec2(aTex, 0.0)) * vec2(' + (1 / NT).toFixed(8) + ', 1.0);\n#endif');
     if (lightId === 'glow') sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += diffuseColor.rgb * 0.95;');
   };
-  m.customProgramCacheKey = () => 'vb-' + lightId;
+  m.customProgramCacheKey = () => 'vb-' + lightId + '-' + rep;
   return m;
 }
 
@@ -145,3 +161,18 @@ export function evalPart(anim, k, t) {
   return { rot: a.rot.map((v, n) => L(v, b.rot[n])), pos: a.pos.map((v, n) => L(v, b.pos[n])), scl: a.scl.map((v, n) => L(v, b.scl[n])) };
 }
 export const animUsable = a => !!(a && a.tracks && Object.values(a.tracks).some(t => t && t.length));
+
+/* ===== Salles de donjon ===== */
+export const BLOCK = 0.24; // taille d'un bloc de construction (m) = 6 cubes de 4 cm
+export const ROOM_TYPES = [
+  { id: 'entrance', name: 'Entrée' }, { id: 'corridor', name: 'Couloir' }, { id: 'crossroad', name: 'Carrefour' },
+  { id: 'combat', name: 'Salle de combat' }, { id: 'deadend', name: 'Impasse' }, { id: 'treasure', name: 'Salle au trésor' },
+  { id: 'boss', name: 'Salle du boss' }, { id: 'stairs', name: 'Escalier / changement de niveau' }, { id: 'other', name: 'Autre' },
+];
+export const DIRS = [ // sens de sortie d'une ouverture (vers l'extérieur de la salle)
+  { id: 'N', name: 'Nord (−Z)', v: [0, 0, -1] }, { id: 'E', name: 'Est (+X)', v: [1, 0, 0] },
+  { id: 'S', name: 'Sud (+Z)', v: [0, 0, 1] }, { id: 'W', name: 'Ouest (−X)', v: [-1, 0, 0] },
+  { id: 'U', name: 'Haut (+Y)', v: [0, 1, 0] }, { id: 'D', name: 'Bas (−Y)', v: [0, -1, 0] },
+];
+export const OPENING_KINDS = [{ id: 'both', name: 'Entrée et sortie' }, { id: 'in', name: 'Entrée seulement' }, { id: 'out', name: 'Sortie seulement' }];
+export function defaultRoomSheet() { return { version: 1, type: 'combat', description: '', ambient: 0.25 }; }

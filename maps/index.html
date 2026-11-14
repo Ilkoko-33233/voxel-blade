@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voxel Blade — Éditeur de maps</title>
+<style>
+  :root{--bg:#12151c;--panel:#1a1f29;--panel2:#222836;--line:#2e3646;--txt:#e8e6e0;--mut:#9aa3b2;--acc:#5fd16a;--acc2:#3a7bd5;--warn:#ff6b4a}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:13px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
+  button,select,input{font:inherit;color:inherit}
+  [hidden]{display:none!important}
+  header button{white-space:nowrap}
+  button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 9px;cursor:pointer}
+  button:hover{border-color:#4a5568}
+  button.on{background:#2b4a33;border-color:var(--acc);color:#d6ffd9}
+  button.primary{background:#2b4a33;border-color:var(--acc)}
+  select,input[type=text],input[type=number],input[type=password]{background:#0f1218;border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+  input[type=number]{width:58px}
+  #app{display:grid;grid-template-rows:44px 1fr;grid-template-columns:262px 1fr 262px;height:100%}
+  header{grid-column:1/4;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header .title{font-weight:700;letter-spacing:.05em;margin-right:6px}
+  header .sep{width:1px;height:24px;background:var(--line);margin:0 4px}
+  header input#cName{width:150px}
+  aside{background:var(--panel);overflow:auto;padding:10px}
+  aside#left{border-right:1px solid var(--line)} aside#right{border-left:1px solid var(--line)}
+  h3{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);margin:14px 0 6px;font-weight:600}
+  h3:first-child{margin-top:2px}
+  .tools{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+  .tools button{padding:6px 2px;font-size:12px}
+  .row{display:flex;align-items:center;gap:6px;margin:5px 0}
+  .row label{min-width:86px;color:var(--mut)}
+  .row select{flex:1}
+  #main{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:minmax(0,1fr);min-height:0;min-width:0}
+  #view3d{position:relative;min-width:0;border-right:1px solid var(--line)}
+  #view3d canvas{display:block}
+  #slicePane{display:flex;flex-direction:column;min-width:0;min-height:0}
+  #sliceBar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;background:var(--panel);border-bottom:1px solid var(--line)}
+  #sliceBar input[type=range]{flex:1;min-width:80px}
+  #sliceWrap{flex:1;position:relative;min-height:0}
+  #slice{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+  .hint{position:absolute;left:8px;bottom:6px;color:var(--mut);font-size:11.5px;pointer-events:none;background:rgba(18,21,28,.7);padding:3px 6px;border-radius:5px}
+  .presets{display:flex;flex-direction:column;gap:4px}
+  .preset{display:flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--line);border-radius:6px;cursor:pointer;background:var(--panel2)}
+  .preset:hover{border-color:#4a5568}
+  .preset .sw{width:22px;height:22px;border-radius:4px;flex:none;border:1px solid rgba(255,255,255,.15)}
+  .preset .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .preset .meta{color:var(--mut);font-size:11px}
+  .preset button{padding:1px 6px;font-size:11px}
+  .toggles{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  .part{border:1px solid var(--line);border-radius:6px;padding:6px;margin-bottom:6px;background:var(--panel2)}
+  .part.active{border-color:var(--acc)}
+  .part .top{display:flex;align-items:center;gap:6px}
+  .part .top input[type=text]{flex:1;min-width:0}
+  .part .sub{display:flex;align-items:center;gap:6px;margin-top:5px;color:var(--mut);font-size:12px;flex-wrap:wrap}
+  .stats div{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed #2a3140}
+  .stats span:last-child{color:#fff}
+  dialog{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-width:330px}
+  dialog::backdrop{background:rgba(0,0,0,.55)}
+  dialog h2{margin:0 0 10px;font-size:16px}
+  dialog .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+  dialog .grid3{display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:6px;align-items:center}
+  #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#0b0e13;border:1px solid var(--line);padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9}
+  #toast.show{opacity:1}
+  .small{font-size:11.5px;color:var(--mut)}
+  .swatchrow{display:flex;gap:6px;align-items:center}
+  input[type=color]{width:42px;height:28px;border:1px solid var(--line);border-radius:6px;background:#0f1218;padding:2px}
+  .tabs{display:flex;gap:2px;margin-right:4px}
+  .tabs button{border-radius:6px}
+  #sheetPane{overflow:auto;padding:12px 16px;background:var(--bg)}
+  #sheetPane section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+  #sheetPane h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}
+  #sheetPane .f{display:grid;grid-template-columns:170px 1fr;gap:6px 10px;align-items:center;margin:6px 0}
+  #sheetPane .f label{color:var(--mut)}
+  #sheetPane .f .u{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  #sheetPane textarea{width:100%;min-height:54px;background:#0f1218;border:1px solid var(--line);border-radius:6px;color:var(--txt);padding:6px;font:inherit;resize:vertical}
+  #sheetPane input[type=number]{width:74px}
+  .atk{border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;background:var(--panel2)}
+  .atk .hd{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .tree{max-height:60vh;overflow:auto;min-width:380px}
+  .tree .cat{color:var(--mut);margin:8px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+  .tree .cr{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin:3px 0;cursor:pointer;background:var(--panel2)}
+  .tree .cr:hover{border-color:var(--acc)}
+  #animPane{display:flex;flex-direction:column;min-width:0;min-height:0}
+  #apTop{flex:1 1 0;min-height:0;overflow:auto;padding:10px 12px}
+  #tlBar,#timeline{flex:none}
+  #apTop .sl{display:grid;grid-template-columns:78px 1fr 64px;gap:6px;align-items:center;margin:3px 0}
+  #apTop .sl label{color:var(--mut);font-size:12px}
+  #apTop .grp{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px}
+  #apTop h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}
+  #tlBar{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--panel);border-top:1px solid var(--line);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  #tlBar .time{font-variant-numeric:tabular-nums;min-width:120px;color:#fff}
+  #timeline{display:block;width:100%;height:190px;cursor:pointer;background:#141820}
+  #easeCv{background:#0f1218;border:1px solid var(--line);border-radius:6px;cursor:crosshair}
+  .alist{display:flex;flex-direction:column;gap:3px}
+  .alist button{text-align:left}
+  .mk{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:12px}
+  .catrow{display:flex;align-items:center;gap:6px;margin:4px 0}
+  .catrow input{flex:1}
+  .texprev{width:28px;height:28px;border:1px solid var(--line);border-radius:4px;image-rendering:pixelated}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="title">VOXEL BLADE</span>
+    <span class="tabs"><button class="on">Salle</button><button disabled title="Prochaine étape : assembler les salles en donjon">Donjon (bientôt)</button></span>
+    <input id="cName" type="text" value="Nouvelle salle" title="Nom de la salle">
+    <span class="sep"></span>
+    <button id="bNew">Nouveau</button>
+    <button id="bOpenGit" title="Ouvrir une salle du dépôt">Ouvrir ▸ GitHub</button>
+    <button id="bOpen" title="Ouvrir un fichier .json">Ouvrir ▸ fichier</button>
+    <button id="bSave" title="Télécharger le fichier .json (Ctrl+S)">Enregistrer</button>
+    <button id="bSend" class="primary">Envoyer ▸ GitHub</button>
+    <span class="sep"></span>
+    <button id="bUndo" title="Annuler (Ctrl+Z)">⟲</button>
+    <button id="bRedo" title="Rétablir (Ctrl+Y)">⟳</button>
+    <span class="sep"></span>
+    <span class="small">Symétrie</span>
+    <button id="symX">X</button><button id="symY">Y</button><button id="symZ">Z</button>
+    <span style="flex:1"></span>
+    <span id="saveState" class="small"></span>
+    <input id="fileIn" type="file" accept=".json,application/json" hidden>
+  </header>
+
+  <aside id="left">
+  <div id="leftModel">
+    <h3>Outils</h3>
+    <div class="tools" id="tools"></div>
+    <div class="row"><label for="shapeFill">Formes</label><select id="shapeFill"><option value="1">Pleines</option><option value="0">Contour</option></select></div>
+    <div class="row" style="gap:4px;flex-wrap:wrap">
+      <button id="bShape3D">Forme 3D…</button>
+      <button id="bFillInside" title="Remplit tous les vides fermés à l'intérieur de la créature avec le pinceau actuel">Remplir l'intérieur</button>
+    </div>
+
+    <h3>Pinceau</h3>
+    <div class="row"><label>Couleur</label><div class="swatchrow"><input id="bColor" type="color" value="#8a8f96"><span id="bColorHex" class="small"></span></div></div>
+    <div class="row"><label for="bTex">Texture visuelle</label><select id="bTex"></select><canvas id="texPrev" class="texprev" width="32" height="32"></canvas></div>
+    <div class="row"><label for="bMat">Texture utile</label><select id="bMat"></select></div>
+    <div class="row"><label for="bLight">Lumière</label><select id="bLight"></select></div>
+    <div id="matInfo" class="small" style="margin:2px 0 0 92px"></div>
+
+    <h3>Presets de matière</h3>
+    <div class="presets" id="presets"></div>
+    <div class="row"><button id="bAddPreset" style="flex:1">+ Créer depuis le pinceau</button></div>
+  </div>
+  </aside>
+
+  <div id="main">
+    <div id="view3d"><div class="hint" id="hint3d">Clic gauche : outil · clic droit : tourner · molette : zoom · clic milieu : déplacer</div></div>
+    <div id="slicePane">
+      <div id="sliceBar">
+        <span class="small">Tranche</span>
+        <button data-axis="z">Face</button><button data-axis="x">Côté</button><button data-axis="y">Dessus</button>
+        <button id="layDown">◀</button>
+        <input id="layer" type="range" min="0" max="31" value="0">
+        <button id="layUp">▶</button>
+        <span id="layerLbl" class="small" style="min-width:64px"></span>
+        <label class="small"><input id="clip3d" type="checkbox"> couper la 3D</label>
+      </div>
+      <div id="sliceWrap"><canvas id="slice"></canvas><div class="hint" id="hintSlice">[ et ] : changer de couche · la couche en dessous apparaît en transparence</div></div>
+    </div>
+  </div>
+
+  <aside id="right">
+    <h3>Affichage</h3>
+    <div class="toggles">
+      <button id="vColor" class="on">Couleur</button>
+      <button id="vTex" class="on">Texture visuelle</button>
+      <button id="vMat">Texture utile</button>
+      <button id="vLight" class="on">Lumière</button>
+      <button id="vParts" style="display:none">Pièces</button>
+      <button id="vDark" title="Aperçu avec la lumière ambiante et les lumières de la salle">Éclairage donjon</button>
+    </div>
+    <p class="small" style="margin:6px 0 0">Chaque aspect s'active séparément. Texture utile + couleur = superposition.</p>
+
+    <h3>Salle</h3>
+    <div class="row"><label>Type</label><select id="rmType"></select></div>
+    <div class="row"><label>Catégorie</label><select id="rmFolder"></select></div>
+    <div class="row" style="gap:4px"><button id="rmAddCat">+ Catégorie</button><button id="rmAddSub">+ Sous-cat.</button><button id="rmManageCats">Gérer…</button></div>
+    <div class="row"><label>Lumière ambiante</label><input id="rmAmbient" type="range" min="0" max="1" step="0.05" style="flex:1"></div>
+    <textarea id="rmDesc" placeholder="Description de la salle" style="width:100%;min-height:44px;background:#0f1218;border:1px solid var(--line);border-radius:6px;color:var(--txt);padding:6px;font:inherit"></textarea>
+
+    <h3>Repères</h3>
+    <div class="row" style="gap:4px;flex-wrap:wrap">
+      <button id="mkOpen" title="Entrée / sortie : point de raccord avec les autres salles">+ Ouverture</button>
+      <button id="mkSpawn" title="Point d'apparition de créatures">+ Apparition</button><button id="mkLight">+ Lumière</button><button id="mkStart" title="Où arrive le joueur (salle d'entrée)">Départ joueur</button>
+    </div>
+    <div id="markerList"></div>
+    <p class="small" style="margin:2px 0 0">« Placer » puis clic sur un bloc (en 3D ou dans la tranche) : le repère se pose sur sa face. Les ouvertures sont les points de raccord entre salles, hauteur comprise.</p>
+
+    <h3>Statistiques</h3>    <h3>Statistiques</h3>
+    <div class="stats" id="stats"></div>
+  </aside>
+</div>
+
+<dialog id="dlgNew">
+  <h2>Nouvelle salle</h2>
+  <div class="row"><label>Nom</label><input id="nName" type="text" value="Nouvelle salle" style="flex:1"></div>
+  <div class="row"><label>Taille (blocs)</label><input id="nX" type="number" value="40" min="4" max="128"> × <input id="nY" type="number" value="20" min="4" max="128"> × <input id="nZ" type="number" value="40" min="4" max="128"></div>
+  <p class="small">Largeur × hauteur × profondeur. Un bloc = 24 cm, donc 40 blocs = 9,6 m.</p>
+  <div class="row"><label>Départ</label><select id="nStart" style="flex:1"><option value="empty">Vide</option><option value="slime">Exemple : salle avec deux portes</option></select></div>
+  <div class="actions"><button id="nCancel">Annuler</button><button id="nOk" class="primary">Créer</button></div>
+</dialog>
+
+<dialog id="dlgShape">
+  <h2>Forme 3D</h2>
+  <div class="row"><label>Forme</label><select id="sType" style="flex:1"><option value="ellipsoid">Ellipsoïde / sphère</option><option value="box">Boîte</option><option value="cylinder">Cylindre (vertical)</option></select></div>
+  <div class="grid3">
+    <span></span><span class="small">X</span><span class="small">Y</span><span class="small">Z</span>
+    <span class="small">Centre</span><input id="sCx" type="number"><input id="sCy" type="number"><input id="sCz" type="number">
+    <span class="small">Dimensions</span><input id="sDx" type="number" value="12"><input id="sDy" type="number" value="12"><input id="sDz" type="number" value="12">
+  </div>
+  <div class="row"><label>Action</label><select id="sMode" style="flex:1"><option value="add">Ajouter (pinceau actuel)</option><option value="paint">Peindre les cubes existants</option><option value="erase">Effacer</option></select></div>
+  <p class="small">En cubes. La symétrie active s'applique aussi.</p>
+  <div class="actions"><button id="sCancel">Annuler</button><button id="sOk" class="primary">Appliquer</button></div>
+</dialog>
+
+<dialog id="dlgGit">
+  <h2>Envoyer sur GitHub</h2>
+  <div class="row"><label>Dépôt</label><input id="gOwner" type="text" placeholder="propriétaire" style="width:120px"> / <input id="gRepo" type="text" placeholder="dépôt" style="width:110px"></div>
+  <div class="row"><label>Branche</label><input id="gBranch" type="text" value="main" style="flex:1"></div>
+  <div class="row"><label>Jeton</label><input id="gToken" type="password" placeholder="github_pat_…" style="flex:1"></div>
+  <p class="small">Jeton GitHub à accès limité à ce dépôt (droit « Contents : Read and write »). Il reste enregistré dans ce navigateur uniquement.</p>
+  <p class="small" id="gPath"></p>
+  <div class="actions"><button id="gCancel">Annuler</button><button id="gOk" class="primary">Envoyer</button></div>
+</dialog>
+<dialog id="dlgCats">
+  <h2>Gérer les catégories</h2>
+  <div id="catList" style="max-height:55vh;overflow:auto;min-width:420px"></div>
+  <p class="small">Le nom affiché peut être changé librement. Une catégorie ne peut être supprimée que si elle est vide (ni salle, ni sous-catégorie).</p>
+  <div class="actions"><button id="cCancel">Fermer</button><button id="cApply" class="primary">Enregistrer sur GitHub</button></div>
+</dialog>
+<dialog id="dlgOpen">
+  <h2>Ouvrir une salle du dépôt</h2>
+  <div class="tree" id="openTree">Chargement…</div>
+  <div class="actions"><button id="oCancel">Fermer</button></div>
+</dialog>
+<div id="toast"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial, BLOCK, ROOM_TYPES, DIRS, OPENING_KINDS, defaultRoomSheet } from '../shared/look.js';
+
+/* ============ Catalogues (types de cubes, textures, lumières : voir shared/look.js) ============ */
+const PART_TINTS = ['#ff6b6b', '#4dabf7', '#ffd43b', '#69db7c', '#da77f2', '#ffa94d', '#3bc9db', '#f783ac'];
+const LS = { auto: 'voxelblade.maps.autosave', presets: 'voxelblade.maps.presets', git: 'voxelblade.editor.github' };
+const CM = Math.round(BLOCK * 100); // 24 cm par bloc
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } };
+
+/* ============ Atlas des textures visuelles ============ */
+const NT = TEXTURES.length, atlasCanvas = makeAtlasCanvas(), atlas = makeAtlas(THREE, atlasCanvas);
+
+/* ============ Données de la créature ============ */
+let P;               // { name, nx, ny, nz, presets[], parts[] }
+let occ, col, tex, mat, lit, prt; // tableaux par case de la grille
+const idx = (x, y, z) => x + P.nx * (y + P.ny * z);
+const inB = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < P.nx && y < P.ny && z < P.nz;
+function alloc(nx, ny, nz) {
+  const n = nx * ny * nz;
+  occ = new Uint8Array(n); col = new Uint32Array(n); tex = new Uint8Array(n); mat = new Uint8Array(n); lit = new Uint8Array(n); prt = new Uint8Array(n);
+}
+function newProject(name, nx, ny, nz) {
+  let presets = []; try { presets = JSON.parse(lsGet(LS.presets) || '[]'); } catch (e) { }
+  if (!presets.length) presets = defaultPresets();
+  P = { name, nx, ny, nz, presets, parts: [{ name: 'Corps', parent: -1, pivot: [Math.floor(nx / 2), 0, Math.floor(nz / 2)], visible: true }],
+    id: null, folder: 'donjons', sheet: defaultRoomSheet(), markers: emptyMarkers() };
+  alloc(nx, ny, nz); history.length = 0; future.length = 0;
+}
+function emptyMarkers() { return { openings: [], spawns: [], lights: [], start: null }; }
+function defaultPresets() {
+  return [
+    { name: 'Dalles de pierre', color: '#8a8f96', tex: 'tiles', mat: 'stone', light: 'matte' },
+    { name: 'Mur de briques', color: '#9a5a44', tex: 'bricks', mat: 'brick', light: 'matte' },
+    { name: 'Pierre brute', color: '#7b8088', tex: 'stone', mat: 'stone', light: 'matte' },
+    { name: 'Plancher', color: '#8a6440', tex: 'planks', mat: 'wood', light: 'matte' },
+    { name: 'Terre battue', color: '#6d5236', tex: 'grain', mat: 'earth', light: 'matte' },
+    { name: 'Grille de métal', color: '#9aa4ab', tex: 'none', mat: 'metal', light: 'metal' },
+  ];
+}
+function creaturePresetsUnused() {
+  return [
+    { name: 'Gelée verte', color: '#34a048', tex: 'grain', mat: 'gel', light: 'translucent' },
+    { name: 'Carapace', color: '#237a3a', tex: 'scales', mat: 'shell', light: 'glossy' },
+    { name: 'Œil', color: '#1a1a2e', tex: 'none', mat: 'eye', light: 'glossy' },
+    { name: 'Noyau', color: '#ff3ad0', tex: 'none', mat: 'core', light: 'glow' },
+    { name: 'Os', color: '#e8e2d0', tex: 'cracks', mat: 'bone', light: 'matte' },
+  ];
+}
+
+/* ============ Pinceau, état de l'interface ============ */
+const brush = { color: 0x8a8f96, tex: TEXTURES.findIndex(t => t.id === 'tiles'), mat: MATS.findIndex(m => m.id === 'stone'), light: 0 };
+let tool = 'pencil', activePart = 0;
+const sym = { x: false, y: false, z: false };
+const view = { color: true, tex: true, mat: false, light: true, parts: false };
+const slice = { axis: 'z', layer: 0, clip: false };
+
+/* ============ Annuler / rétablir ============ */
+const history = [], future = [];
+let stroke = null;
+const snap = i => [occ[i], col[i], tex[i], mat[i], lit[i], prt[i]];
+function put(i, s) { occ[i] = s[0]; col[i] = s[1]; tex[i] = s[2]; mat[i] = s[3]; lit[i] = s[4]; prt[i] = s[5]; }
+function beginStroke() { stroke = new Map(); }
+function touch(i) { if (stroke && !stroke.has(i)) stroke.set(i, snap(i)); }
+function endStroke() {
+  if (!stroke) return; const ch = [];
+  for (const [i, before] of stroke) { const after = snap(i); if (before.some((v, k) => v !== after[k])) ch.push([i, before, after]); }
+  stroke = null;
+  if (ch.length) { history.push(ch); if (history.length > 200) history.shift(); future.length = 0; markDirty(); }
+}
+function undo() { const ch = history.pop(); if (!ch) return; for (const [i, b] of ch) put(i, b); future.push(ch); markDirty(); }
+function redo() { const ch = future.pop(); if (!ch) return; for (const [i, , a] of ch) put(i, a); history.push(ch); markDirty(); }
+
+/* ============ Opérations sur les cubes (avec symétrie) ============ */
+function mirrors(x, y, z) {
+  const out = [[x, y, z]];
+  const add = f => { for (const p of out.slice()) { const q = f(p); if (!out.some(o => o[0] === q[0] && o[1] === q[1] && o[2] === q[2])) out.push(q); } };
+  if (sym.x) add(p => [P.nx - 1 - p[0], p[1], p[2]]);
+  if (sym.y) add(p => [p[0], P.ny - 1 - p[1], p[2]]);
+  if (sym.z) add(p => [p[0], p[1], P.nz - 1 - p[2]]);
+  return out;
+}
+function applyAt(x, y, z, mode) {
+  for (const [a, b, c] of mirrors(x, y, z)) {
+    if (!inB(a, b, c)) continue; const i = idx(a, b, c);
+    if (mode === 'add') { touch(i); occ[i] = 1; col[i] = brush.color; tex[i] = brush.tex; mat[i] = brush.mat; lit[i] = brush.light; prt[i] = activePart; }
+    else if (mode === 'erase') { if (occ[i]) { touch(i); occ[i] = 0; } }
+    else if (mode === 'paint') { if (occ[i]) { touch(i); col[i] = brush.color; tex[i] = brush.tex; mat[i] = brush.mat; lit[i] = brush.light; } }
+    else if (mode === 'part') { if (occ[i]) { touch(i); prt[i] = activePart; } }
+  }
+}
+function pickAt(i) {
+  if (!occ[i]) return;
+  brush.color = col[i]; brush.tex = tex[i]; brush.mat = mat[i]; brush.light = lit[i];
+  syncBrushUI(); toast('Pinceau copié depuis le cube');
+}
+// remplissage 3D : cubes reliés ayant exactement le même aspect
+function fill3D(i0) {
+  if (!occ[i0]) return;
+  const key = i => col[i] + '|' + tex[i] + '|' + mat[i] + '|' + lit[i];
+  const k0 = key(i0), seen = new Uint8Array(occ.length), st = [i0]; seen[i0] = 1;
+  const NB = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  while (st.length) {
+    const i = st.pop(); const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny));
+    applyAt(x, y, z, 'paint');
+    for (const [a, b, c] of NB) { const X = x + a, Y = y + b, Z = z + c; if (!inB(X, Y, Z)) continue; const j = idx(X, Y, Z); if (!seen[j] && occ[j] && key(j) === k0) { seen[j] = 1; st.push(j); } }
+  }
+}
+// remplit les vides fermés (non reliés à l'extérieur de la grille)
+function fillInside() {
+  const n = occ.length, outside = new Uint8Array(n), st = [];
+  for (let z = 0; z < P.nz; z++) for (let y = 0; y < P.ny; y++) for (let x = 0; x < P.nx; x++) {
+    if (x && y && z && x < P.nx - 1 && y < P.ny - 1 && z < P.nz - 1) continue;
+    const i = idx(x, y, z); if (!occ[i]) { outside[i] = 1; st.push(i); }
+  }
+  const NB = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  while (st.length) {
+    const i = st.pop(); const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny));
+    for (const [a, b, c] of NB) { const X = x + a, Y = y + b, Z = z + c; if (!inB(X, Y, Z)) continue; const j = idx(X, Y, Z); if (!outside[j] && !occ[j]) { outside[j] = 1; st.push(j); } }
+  }
+  beginStroke(); let k = 0;
+  for (let i = 0; i < n; i++) if (!occ[i] && !outside[i]) { touch(i); occ[i] = 1; col[i] = brush.color; tex[i] = brush.tex; mat[i] = brush.mat; lit[i] = brush.light; prt[i] = activePart; k++; }
+  endStroke(); toast(k ? k + ' cubes ajoutés à l\'intérieur' : 'Aucun vide fermé trouvé');
+}
+function shape3D(type, c, d, mode) {
+  beginStroke();
+  const rx = d[0] / 2, ry = d[1] / 2, rz = d[2] / 2;
+  for (let z = Math.floor(c[2] - rz); z <= Math.ceil(c[2] + rz); z++) for (let y = Math.floor(c[1] - ry); y <= Math.ceil(c[1] + ry); y++) for (let x = Math.floor(c[0] - rx); x <= Math.ceil(c[0] + rx); x++) {
+    if (!inB(x, y, z)) continue;
+    const u = (x + 0.5 - c[0]) / rx, v = (y + 0.5 - c[1]) / ry, w = (z + 0.5 - c[2]) / rz;
+    const inside = type === 'box' ? Math.abs(u) <= 1 && Math.abs(v) <= 1 && Math.abs(w) <= 1
+      : type === 'cylinder' ? u * u + w * w <= 1 && Math.abs(v) <= 1 : u * u + v * v + w * w <= 1;
+    if (inside) applyAt(x, y, z, mode);
+  }
+  endStroke();
+}
+
+/* ============ Exemple : salle avec deux portes ============ */
+function buildSlimeExample() {
+  newProject('Salle d\'exemple', 30, 16, 30); P.id = null; P.folder = 'donjons';
+  const T = id => TEXTURES.findIndex(t => t.id === id), M = id => MATS.findIndex(m => m.id === id);
+  const put = (x, y, z, c, t, m) => { const i = idx(x, y, z); occ[i] = 1; col[i] = c; tex[i] = T(t); mat[i] = M(m); lit[i] = 0; prt[i] = 0; };
+  for (let z = 0; z < 30; z++) for (let x = 0; x < 30; x++) {
+    put(x, 0, z, 0x8a8f96, 'tiles', 'stone');                                                                     // sol
+    if (x === 0 || z === 0 || x === 29 || z === 29) for (let y = 1; y <= 12; y++) put(x, y, z, 0x9a5a44, 'bricks', 'brick'); // murs
+  }
+  for (const zz of [0, 29]) for (let x = 13; x <= 16; x++) for (let y = 1; y <= 10; y++) occ[idx(x, y, zz)] = 0;   // deux portes de 4 × 10 blocs
+  P.markers.openings.push({ name: 'Porte nord', kind: 'both', dir: 'N', pos: [15, 1, 0], w: 4, h: 10 });
+  P.markers.openings.push({ name: 'Porte sud', kind: 'both', dir: 'S', pos: [15, 1, 30], w: 4, h: 10 });
+  P.markers.lights.push({ pos: [3.5, 7.5, 3.5], color: '#ffb050', intensity: 1, range: 6, flicker: true });
+  P.markers.lights.push({ pos: [26.5, 7.5, 26.5], color: '#ffb050', intensity: 1, range: 6, flicker: true });
+  P.markers.spawns.push({ pos: [15, 1, 15], creature: '', category: 'monstres', levelMin: 1, levelMax: 3, count: 2, radius: 3 });
+  P.markers.start = { pos: [15, 1, 26], dir: 'N' };
+}
+/* ============ Rendu 3D ============ */
+const v3 = document.getElementById('view3d');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+v3.prepend(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1b2130);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const hemi = new THREE.HemisphereLight(0xeaf4ff, 0x404a38, 1.0); scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff2d8, 1.8); sun.position.set(30, 60, 40); scene.add(sun);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+controls.enableDamping = true;
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+const world = new THREE.Group(); scene.add(world);
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+
+const makeMaterial = id => makeVoxelMaterial(THREE, id, atlas, { repeat: 6 }); // 6 × 6 motifs par face = détail d'un cube de 4 cm
+const buckets = LIGHTS.map(L => ({ id: L.id, mat: makeMaterial(L.id), mesh: null, cap: 0, cells: null }));
+function ensureCap(b, n) {
+  if (b.mesh && b.cap >= n) return;
+  if (b.mesh) { world.remove(b.mesh); b.mesh.geometry.dispose(); }
+  b.cap = Math.max(256, Math.ceil(n * 1.5));
+  const geo = boxGeo.clone(); geo.setAttribute('aTex', new THREE.InstancedBufferAttribute(new Float32Array(b.cap), 1));
+  b.mesh = new THREE.InstancedMesh(geo, b.mat, b.cap); b.mesh.frustumCulled = false; b.mesh.count = 0;
+  b.mesh.setColorAt(0, new THREE.Color(1, 1, 1)); b.cells = new Int32Array(b.cap);
+  if (b.id === 'translucent') b.mesh.renderOrder = 2;
+  world.add(b.mesh);
+}
+buckets.forEach(b => ensureCap(b, 256));
+const tmpC = new THREE.Color(), tmpM = new THREE.Color();
+function cellVisible(x, y, z) {
+  if (!inB(x, y, z)) return false;
+  const i = idx(x, y, z); if (!occ[i] || !P.parts[prt[i]] || !P.parts[prt[i]].visible) return false;
+  if (slice.clip) { const c = slice.axis === 'x' ? x : slice.axis === 'y' ? y : z; if (c > slice.layer) return false; }
+  return true;
+}
+function displayColor(i, out) {
+  if (view.parts) { out.set(PART_TINTS[prt[i] % PART_TINTS.length]); if (view.color) out.lerp(tmpM.setHex(col[i]), 0.35); return out; }
+  if (view.color) out.setHex(col[i]); else out.set(0xb8b8b8);
+  if (view.mat) { tmpM.set(MATS[mat[i]] ? MATS[mat[i]].color : '#888'); if (view.color) out.lerp(tmpM, 0.55); else out.copy(tmpM); }
+  return out;
+}
+let stats = {};
+function rebuild3D() {
+  const counts = new Array(LIGHTS.length).fill(0);
+  // première passe : compter les cubes de surface par lumière
+  const surf = [];
+  for (let z = 0; z < P.nz; z++) for (let y = 0; y < P.ny; y++) for (let x = 0; x < P.nx; x++) {
+    if (!cellVisible(x, y, z)) continue;
+    if (cellVisible(x + 1, y, z) && cellVisible(x - 1, y, z) && cellVisible(x, y + 1, z) && cellVisible(x, y - 1, z) && cellVisible(x, y, z + 1) && cellVisible(x, y, z - 1)) continue;
+    const i = idx(x, y, z); surf.push(i); counts[view.light ? lit[i] : 0]++;
+  }
+  buckets.forEach((b, k) => { ensureCap(b, counts[k]); b.mesh.count = 0; });
+  const m4 = new THREE.Matrix4(), ox = -P.nx / 2, oz = -P.nz / 2;
+  for (const i of surf) {
+    const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny));
+    const b = buckets[view.light ? lit[i] : 0], s = b.mesh.count++;
+    m4.makeTranslation(x + 0.5 + ox, y + 0.5, z + 0.5 + oz); b.mesh.setMatrixAt(s, m4);
+    b.mesh.setColorAt(s, displayColor(i, tmpC));
+    b.mesh.geometry.attributes.aTex.array[s] = view.tex ? tex[i] : 0; b.cells[s] = i;
+  }
+  buckets.forEach(b => { b.mesh.instanceMatrix.needsUpdate = true; if (b.mesh.instanceColor) b.mesh.instanceColor.needsUpdate = true; b.mesh.geometry.attributes.aTex.needsUpdate = true; });
+  stats.surface = surf.length;
+}
+// repères : grille au sol, volume, plan de tranche, pivots
+const helpers = new THREE.Group(); scene.add(helpers);
+let sliceHelper, pivotGroup = new THREE.Group(); scene.add(pivotGroup);
+function rebuildHelpers() {
+  helpers.clear();
+  const grid = new THREE.GridHelper(Math.max(P.nx, P.nz), Math.max(P.nx, P.nz), 0x3d475c, 0x2a3242); grid.scale.set(P.nx / Math.max(P.nx, P.nz), 1, P.nz / Math.max(P.nx, P.nz)); helpers.add(grid);
+  const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(P.nx, P.ny, P.nz)), new THREE.LineBasicMaterial({ color: 0x4a5568 }));
+  box.position.set(0, P.ny / 2, 0); helpers.add(box);
+  sliceHelper = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x5fd16a, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }));
+  helpers.add(sliceHelper); updateSliceHelper();
+}
+function updateSliceHelper() {
+  if (!sliceHelper) return; const L = slice.layer + 0.5;
+  if (slice.axis === 'z') { sliceHelper.scale.set(P.nx, P.ny, 1); sliceHelper.rotation.set(0, 0, 0); sliceHelper.position.set(0, P.ny / 2, L - P.nz / 2); }
+  if (slice.axis === 'x') { sliceHelper.scale.set(P.nz, P.ny, 1); sliceHelper.rotation.set(0, Math.PI / 2, 0); sliceHelper.position.set(L - P.nx / 2, P.ny / 2, 0); }
+  if (slice.axis === 'y') { sliceHelper.scale.set(P.nx, P.nz, 1); sliceHelper.rotation.set(-Math.PI / 2, 0, 0); sliceHelper.position.set(0, L, 0); }
+}
+function rebuildPivots() {
+  pivotGroup.clear();
+  P.parts.forEach((p, k) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(k === activePart ? 0.55 : 0.4, 12, 8), new THREE.MeshBasicMaterial({ color: PART_TINTS[k % PART_TINTS.length], depthTest: false }));
+    m.renderOrder = 5; m.position.set(p.pivot[0] + 0.5 - P.nx / 2, p.pivot[1] + 0.5, p.pivot[2] + 0.5 - P.nz / 2); pivotGroup.add(m);
+  });
+}
+function frameCamera() {
+  const r = Math.max(P.nx, P.ny, P.nz);
+  camera.position.set(r * 1.25, P.ny / 2 + r * 0.95, r * 2.0); controls.target.set(0, P.ny / 2, 0); controls.update();
+}
+const hover = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02, 1.02, 1.02)), new THREE.LineBasicMaterial({ color: 0xffffff }));
+hover.visible = false; scene.add(hover);
+
+/* ============ Interaction 3D ============ */
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), gp = new THREE.Vector3();
+function pick3D(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(buckets.map(b => b.mesh), false);
+  if (hits.length) {
+    const h = hits[0], b = buckets.find(b => b.mesh === h.object), i = b.cells[h.instanceId];
+    const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny)), n = h.face.normal;
+    return { hit: [x, y, z], i, add: [x + Math.round(n.x), y + Math.round(n.y), z + Math.round(n.z)] };
+  }
+  if (ray.ray.intersectPlane(groundPlane, gp)) {
+    const x = Math.floor(gp.x + P.nx / 2), z = Math.floor(gp.z + P.nz / 2);
+    if (inB(x, 0, z)) return { hit: null, add: [x, 0, z] };
+  }
+  return null;
+}
+let drag3D = false, last3D = -1;
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  const p = pick3D(e); if (!p) return;
+  if (tool === 'place') { placeMarkerAt(...p.add); return; }
+  if (tool === 'picker') { if (p.hit) pickAt(p.i); return; }
+  if (tool === 'fill') { if (p.hit) { beginStroke(); fill3D(p.i); endStroke(); } return; }
+  beginStroke(); drag3D = true; last3D = -1; act3D(p);
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+renderer.domElement.addEventListener('pointermove', e => {
+  const p = pick3D(e);
+  if (p) { const c = (tool === 'pencil' ? p.add : p.hit) || p.add; hover.position.set(c[0] + 0.5 - P.nx / 2, c[1] + 0.5, c[2] + 0.5 - P.nz / 2); hover.visible = inB(...c); } else hover.visible = false;
+  if (drag3D && p && tool !== 'pencil') act3D(p);
+});
+renderer.domElement.addEventListener('pointerup', () => { if (drag3D) { drag3D = false; endStroke(); } });
+renderer.domElement.addEventListener('pointerleave', () => { hover.visible = false; });
+function act3D(p) {
+  if (tool === 'pencil') { if (inB(...p.add)) applyAt(...p.add, 'add'); }
+  else if (!p.hit) return;
+  else { const i = idx(...p.hit); if (i === last3D) return; last3D = i; applyAt(...p.hit, tool === 'eraser' ? 'erase' : tool === 'paint' ? 'paint' : 'none'); }
+  markDirty(true);
+}
+
+/* ============ Vue tranche (2D) ============ */
+const sc = document.getElementById('slice'), sg = sc.getContext('2d');
+let cellPx = 10, offX = 0, offY = 0;
+function sliceDims() { return slice.axis === 'z' ? [P.nx, P.ny] : slice.axis === 'x' ? [P.nz, P.ny] : [P.nx, P.nz]; }
+function sliceMax() { return (slice.axis === 'z' ? P.nz : slice.axis === 'x' ? P.nx : P.ny) - 1; }
+function uvToXYZ(u, v, layer = slice.layer) { return slice.axis === 'z' ? [u, v, layer] : slice.axis === 'x' ? [layer, v, u] : [u, layer, v]; }
+function drawSlice() {
+  const W = sc.clientWidth, H = sc.clientHeight, dpr = Math.min(devicePixelRatio, 2);
+  if (sc.width !== Math.round(W * dpr) || sc.height !== Math.round(H * dpr)) { sc.width = Math.round(W * dpr); sc.height = Math.round(H * dpr); }
+  sg.setTransform(dpr, 0, 0, dpr, 0, 0); sg.fillStyle = '#141820'; sg.fillRect(0, 0, W, H);
+  const [nu, nv] = sliceDims(); cellPx = Math.max(2, Math.floor(Math.min((W - 24) / nu, (H - 24) / nv)));
+  offX = Math.floor((W - nu * cellPx) / 2); offY = Math.floor((H - nv * cellPx) / 2);
+  sg.fillStyle = '#1b2130'; sg.fillRect(offX, offY, nu * cellPx, nv * cellPx);
+  const ghostLayer = slice.layer - 1;
+  for (let v = 0; v < nv; v++) for (let u = 0; u < nu; u++) {
+    const [x, y, z] = uvToXYZ(u, v), px = offX + u * cellPx, py = offY + (nv - 1 - v) * cellPx;
+    const i = idx(x, y, z);
+    if (occ[i] && P.parts[prt[i]] && P.parts[prt[i]].visible) { sg.fillStyle = '#' + displayColor(i, tmpC).getHexString(); sg.fillRect(px, py, cellPx, cellPx); }
+    else if (ghostLayer >= 0) { const [gx, gy, gz] = uvToXYZ(u, v, ghostLayer), j = idx(gx, gy, gz); if (occ[j]) { sg.globalAlpha = 0.22; sg.fillStyle = '#' + displayColor(j, tmpC).getHexString(); sg.fillRect(px, py, cellPx, cellPx); sg.globalAlpha = 1; } }
+  }
+  if (cellPx >= 6) { // quadrillage
+    sg.strokeStyle = 'rgba(255,255,255,.06)'; sg.lineWidth = 1; sg.beginPath();
+    for (let u = 0; u <= nu; u++) { sg.moveTo(offX + u * cellPx + .5, offY); sg.lineTo(offX + u * cellPx + .5, offY + nv * cellPx); }
+    for (let v = 0; v <= nv; v++) { sg.moveTo(offX, offY + v * cellPx + .5); sg.lineTo(offX + nu * cellPx, offY + v * cellPx + .5); }
+    sg.stroke();
+  }
+  // axes de symétrie
+  sg.strokeStyle = 'rgba(95,209,106,.55)'; sg.setLineDash([4, 4]); sg.beginPath();
+  const symU = slice.axis === 'x' ? sym.z : sym.x, symV = slice.axis === 'y' ? sym.z : sym.y;
+  if (symU) { sg.moveTo(offX + nu * cellPx / 2, offY); sg.lineTo(offX + nu * cellPx / 2, offY + nv * cellPx); }
+  if (symV) { sg.moveTo(offX, offY + nv * cellPx / 2); sg.lineTo(offX + nu * cellPx, offY + nv * cellPx / 2); }
+  sg.stroke(); sg.setLineDash([]);
+  // pivots présents sur cette couche
+  P.parts.forEach((p, k) => {
+    const [px, py, pz] = p.pivot, onLayer = slice.axis === 'z' ? pz === slice.layer : slice.axis === 'x' ? px === slice.layer : py === slice.layer;
+    if (!onLayer) return; const u = slice.axis === 'x' ? pz : px, v = slice.axis === 'y' ? pz : py;
+    sg.fillStyle = PART_TINTS[k % PART_TINTS.length]; sg.beginPath(); sg.arc(offX + (u + .5) * cellPx, offY + (nv - 1 - v + .5) * cellPx, Math.max(3, cellPx * .35), 0, 7); sg.fill();
+  });
+  // aperçu de forme en cours
+  if (shapeDrag) { sg.fillStyle = 'rgba(255,255,255,.35)'; for (const [u, v] of shapeCells(shapeDrag.u0, shapeDrag.v0, shapeDrag.u1, shapeDrag.v1)) sg.fillRect(offX + u * cellPx, offY + (nv - 1 - v) * cellPx, cellPx, cellPx); }
+  const names = { z: 'face', x: 'côté', y: 'dessus' };
+  document.getElementById('layerLbl').textContent = 'couche ' + (slice.layer + 1) + ' / ' + (sliceMax() + 1);
+  document.getElementById('hintSlice').textContent = 'Vue de ' + names[slice.axis] + ' · [ et ] : changer de couche · la couche précédente apparaît en transparence';
+}
+function sliceCell(e) {
+  const r = sc.getBoundingClientRect(), [nu, nv] = sliceDims();
+  const u = Math.floor((e.clientX - r.left - offX) / cellPx), v = nv - 1 - Math.floor((e.clientY - r.top - offY) / cellPx);
+  return u >= 0 && v >= 0 && u < nu && v < nv ? [u, v] : null;
+}
+function shapeCells(u0, v0, u1, v1) {
+  const out = [], filled = document.getElementById('shapeFill').value === '1';
+  if (tool === 'line') {
+    const n = Math.max(Math.abs(u1 - u0), Math.abs(v1 - v0)) || 1;
+    for (let k = 0; k <= n; k++) out.push([Math.round(u0 + (u1 - u0) * k / n), Math.round(v0 + (v1 - v0) * k / n)]);
+    return out;
+  }
+  const ua = Math.min(u0, u1), ub = Math.max(u0, u1), va = Math.min(v0, v1), vb = Math.max(v0, v1);
+  const cu = (ua + ub) / 2, cv = (va + vb) / 2, ru = (ub - ua) / 2 + 0.5, rv = (vb - va) / 2 + 0.5;
+  for (let v = va; v <= vb; v++) for (let u = ua; u <= ub; u++) {
+    let inside, edge;
+    if (tool === 'rect') { inside = true; edge = u === ua || u === ub || v === va || v === vb; }
+    else { const d = ((u - cu) / ru) ** 2 + ((v - cv) / rv) ** 2; inside = d <= 1; edge = inside && (((u + 1 - cu) / ru) ** 2 + ((v - cv) / rv) ** 2 > 1 || ((u - 1 - cu) / ru) ** 2 + ((v - cv) / rv) ** 2 > 1 || ((u - cu) / ru) ** 2 + ((v + 1 - cv) / rv) ** 2 > 1 || ((u - cu) / ru) ** 2 + ((v - 1 - cv) / rv) ** 2 > 1); }
+    if (inside && (filled || edge)) out.push([u, v]);
+  }
+  return out;
+}
+function fill2D(u0, v0) { // remplit la zone de la couche (vide → ajoute, pleine de même aspect → repeint)
+  const [nu, nv] = sliceDims(), i0 = idx(...uvToXYZ(u0, v0)), empty = !occ[i0];
+  const key = i => occ[i] ? col[i] + '|' + tex[i] + '|' + mat[i] + '|' + lit[i] : 'vide', k0 = key(i0);
+  const seen = new Uint8Array(nu * nv), st = [[u0, v0]]; seen[u0 + nu * v0] = 1;
+  while (st.length) {
+    const [u, v] = st.pop(); applyAt(...uvToXYZ(u, v), empty ? 'add' : 'paint');
+    for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const U = u + a, W = v + b; if (U < 0 || W < 0 || U >= nu || W >= nv || seen[U + nu * W]) continue;
+      if (key(idx(...uvToXYZ(U, W))) === k0) { seen[U + nu * W] = 1; st.push([U, W]); }
+    }
+  }
+}
+let drag2D = false, shapeDrag = null;
+sc.addEventListener('pointerdown', e => {
+  const c = sliceCell(e); if (!c) return; sc.setPointerCapture(e.pointerId);
+  const [x, y, z] = uvToXYZ(...c), i = idx(x, y, z);
+  if (tool === 'place') { placeMarkerAt(x, y, z); return; }
+  if (tool === 'picker') { pickAt(i); return; }
+  if (tool === 'fill') { beginStroke(); fill2D(...c); endStroke(); return; }
+  if (tool === 'line' || tool === 'rect' || tool === 'ellipse') { shapeDrag = { u0: c[0], v0: c[1], u1: c[0], v1: c[1] }; drawSlice(); return; }
+  beginStroke(); drag2D = true; act2D(c);
+});
+sc.addEventListener('pointermove', e => {
+  const c = sliceCell(e); if (!c) return;
+  if (shapeDrag) { shapeDrag.u1 = c[0]; shapeDrag.v1 = c[1]; drawSlice(); return; }
+  if (drag2D) act2D(c);
+});
+sc.addEventListener('pointerup', () => {
+  if (shapeDrag) { beginStroke(); for (const [u, v] of shapeCells(shapeDrag.u0, shapeDrag.v0, shapeDrag.u1, shapeDrag.v1)) applyAt(...uvToXYZ(u, v), 'add'); endStroke(); shapeDrag = null; drawSlice(); }
+  if (drag2D) { drag2D = false; endStroke(); }
+});
+function act2D(c) {
+  const m = { pencil: 'add', eraser: 'erase', paint: 'paint', part: 'part' }[tool]; if (!m) return;
+  applyAt(...uvToXYZ(...c), m); markDirty(true);
+}
+
+/* ============ Interface : outils, pinceau, presets ============ */
+const TOOLS = [
+  ['pencil', 'Crayon', 'B'], ['eraser', 'Gomme', 'E'], ['paint', 'Peinture', 'P'], ['fill', 'Pot', 'G'],
+  ['picker', 'Pipette', 'I'], ['line', 'Ligne', 'L'], ['rect', 'Rectangle', 'R'], ['ellipse', 'Ellipse', 'O'],
+];
+const toolsEl = document.getElementById('tools');
+TOOLS.forEach(([id, name, key]) => { const b = document.createElement('button'); b.textContent = name; b.title = name + ' (' + key + ')'; b.dataset.tool = id; b.onclick = () => setTool(id); toolsEl.append(b); });
+function setTool(t) {
+  tool = t; toolsEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  const h = { pencil: 'Crayon : ajoute un cube contre la face visée', eraser: 'Gomme : glisser pour effacer', paint: 'Peinture : repeint sans ajouter', fill: 'Pot : 3D = cubes reliés de même aspect · tranche = zone de la couche', picker: 'Pipette : copie le cube visé dans le pinceau', line: 'Ligne : dans la vue tranche', rect: 'Rectangle : dans la vue tranche', ellipse: 'Ellipse : dans la vue tranche', place: 'Cliquez sur un bloc pour y poser le repère' }[t] || '';
+  document.getElementById('hint3d').textContent = h + ' · clic droit : tourner · molette : zoom · clic milieu : déplacer';
+}
+const $ = id => document.getElementById(id);
+const fillSel = (el, list, f) => { el.innerHTML = ''; list.forEach((it, k) => { const o = document.createElement('option'); o.value = k; o.textContent = f(it); el.append(o); }); };
+fillSel($('bTex'), TEXTURES, t => t.name); fillSel($('bLight'), LIGHTS, l => l.name);
+function refreshMatSelect() { fillSel($('bMat'), MATS, m => m.name + ' (' + m.hp + ' PV)'); }
+refreshMatSelect();
+function syncBrushUI() {
+  $('bColor').value = '#' + brush.color.toString(16).padStart(6, '0'); $('bColorHex').textContent = $('bColor').value;
+  $('bTex').value = brush.tex; $('bMat').value = brush.mat; $('bLight').value = brush.light;
+  const m = MATS[brush.mat]; $('matInfo').textContent = m ? m.hp + ' PV' + (m.info ? ' · ' + m.info : '') : '';
+  const g = $('texPrev').getContext('2d'); g.clearRect(0, 0, 32, 32); g.drawImage(atlasCanvas, brush.tex * TILE, 0, TILE, TILE, 0, 0, 32, 32);
+  g.globalCompositeOperation = 'multiply'; g.fillStyle = $('bColor').value; g.fillRect(0, 0, 32, 32); g.globalCompositeOperation = 'source-over';
+}
+$('bColor').oninput = e => { brush.color = parseInt(e.target.value.slice(1), 16); syncBrushUI(); };
+$('bTex').onchange = e => { brush.tex = +e.target.value; syncBrushUI(); };
+$('bMat').onchange = e => { brush.mat = +e.target.value; syncBrushUI(); };
+$('bLight').onchange = e => { brush.light = +e.target.value; syncBrushUI(); };
+const byId = (list, id) => Math.max(0, list.findIndex(o => o.id === id));
+function renderPresets() {
+  const el = $('presets'); el.innerHTML = '';
+  P.presets.forEach((p, k) => {
+    const d = document.createElement('div'); d.className = 'preset'; d.title = 'Cliquer pour utiliser ce preset';
+    const t = TEXTURES[byId(TEXTURES, p.tex)], m = MATS[byId(MATS, p.mat)], l = LIGHTS[byId(LIGHTS, p.light)];
+    d.innerHTML = `<span class="sw" style="background:${p.color}"></span><span class="nm">${escapeHtml(p.name)}<br><span class="meta">${t.name} · ${m.name} · ${l.name}</span></span>`;
+    const ren = document.createElement('button'); ren.textContent = '✎'; ren.title = 'Renommer';
+    ren.onclick = ev => { ev.stopPropagation(); const n = prompt('Nom du preset', p.name); if (n) { p.name = n; presetsChanged(); } };
+    const upd = document.createElement('button'); upd.textContent = '⟳'; upd.title = 'Remplacer par le pinceau actuel';
+    upd.onclick = ev => { ev.stopPropagation(); Object.assign(p, presetFromBrush(p.name)); presetsChanged(); toast('Preset mis à jour'); };
+    const del = document.createElement('button'); del.textContent = '×'; del.title = 'Supprimer';
+    del.onclick = ev => { ev.stopPropagation(); P.presets.splice(k, 1); presetsChanged(); };
+    d.append(ren, upd, del);
+    d.onclick = () => { brush.color = parseInt(p.color.slice(1), 16); brush.tex = byId(TEXTURES, p.tex); brush.mat = byId(MATS, p.mat); brush.light = byId(LIGHTS, p.light); syncBrushUI(); toast('Preset « ' + p.name + ' »'); };
+    el.append(d);
+  });
+}
+function presetFromBrush(name) { return { name, color: '#' + brush.color.toString(16).padStart(6, '0'), tex: TEXTURES[brush.tex].id, mat: MATS[brush.mat].id, light: LIGHTS[brush.light].id }; }
+function presetsChanged() { renderPresets(); lsSet(LS.presets, JSON.stringify(P.presets)); markDirty(); }
+$('bAddPreset').onclick = () => {
+  const n = prompt('Nom du nouveau preset', MATS[brush.mat].name + ' ' + LIGHTS[brush.light].name.toLowerCase()); if (!n) return;
+  P.presets.push(presetFromBrush(n)); presetsChanged();
+};
+const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ============ Pièces (une seule pièce « Salle » pour les salles) ============ */
+function renderParts() { }
+pivotGroup.visible = false;
+/* ============ Statistiques ============ */
+function renderStats() {
+  let n = 0, hp = 0, x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1, y1 = -1, z1 = -1; const byMat = new Array(MATS.length).fill(0);
+  for (let i = 0; i < occ.length; i++) if (occ[i]) {
+    n++; byMat[mat[i]]++; hp += MATS[mat[i]] ? MATS[mat[i]].hp : 0;
+    const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny));
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  const cm = v => (v * CM / 100).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' m', dims = n ? `${cm(x1 - x0 + 1)} × ${cm(y1 - y0 + 1)} × ${cm(z1 - z0 + 1)}` : '—';
+  let h = `<div><span>Blocs</span><span>${n.toLocaleString('fr-FR')}</span></div>
+    <div><span>Blocs visibles (surface)</span><span>${(stats.surface || 0).toLocaleString('fr-FR')}</span></div>
+    <div><span>Dimensions (L × H × P)</span><span>${dims}</span></div>
+    <div><span>Grille</span><span>${P.nx} × ${P.ny} × ${P.nz}</span></div>
+    <div><span>Repères</span><span>${P.markers.openings.length} ouv. · ${P.markers.spawns.length} app. · ${P.markers.lights.length} lum.</span></div>`;
+  MATS.forEach((m, k) => { if (byMat[k]) h += `<div><span>· ${m.name}</span><span>${byMat[k].toLocaleString('fr-FR')}</span></div>`; });
+  $('stats').innerHTML = h;
+}
+
+/* ============ Affichage, symétrie, tranche ============ */
+[['vColor', 'color'], ['vTex', 'tex'], ['vMat', 'mat'], ['vLight', 'light'], ['vParts', 'parts'], ['vDark', 'dark']].forEach(([id, k]) => {
+  $(id).onclick = () => { view[k] = !view[k]; $(id).classList.toggle('on', view[k]); markDirty(true, true); if (k === 'dark') { applyLighting(); rebuildMarkers(); } };
+});
+['x', 'y', 'z'].forEach(a => { const b = $('sym' + a.toUpperCase()); b.onclick = () => { sym[a] = !sym[a]; b.classList.toggle('on', sym[a]); drawSlice(); }; });
+document.querySelectorAll('#sliceBar [data-axis]').forEach(b => b.onclick = () => { slice.axis = b.dataset.axis; slice.layer = Math.min(slice.layer, sliceMax()); syncSliceUI(); markDirty(true, true); });
+function syncSliceUI() {
+  document.querySelectorAll('#sliceBar [data-axis]').forEach(b => b.classList.toggle('on', b.dataset.axis === slice.axis));
+  $('layer').max = sliceMax(); $('layer').value = slice.layer; updateSliceHelper();
+}
+const setLayer = l => { slice.layer = Math.max(0, Math.min(sliceMax(), l)); syncSliceUI(); markDirty(slice.clip, true); };
+$('layer').oninput = e => setLayer(+e.target.value);
+$('layDown').onclick = () => setLayer(slice.layer - 1); $('layUp').onclick = () => setLayer(slice.layer + 1);
+$('clip3d').onchange = e => { slice.clip = e.target.checked; markDirty(true, true); };
+
+/* ============ Rafraîchissement ============ */
+let dirty3D = true, dirtySlice = true, dirtyStats = true, unsaved = false;
+function markDirty(fast = false, viewOnly = false) { dirty3D = true; dirtySlice = true; if (!viewOnly) { dirtyStats = true; unsaved = true; $('saveState').textContent = 'modifications non enregistrées'; } }
+let statsTimer = 0;
+function loop(t) {
+  requestAnimationFrame(loop);
+  if (dirty3D) { rebuild3D(); dirty3D = false; }
+  if (dirtySlice) { drawSlice(); dirtySlice = false; }
+  if (dirtyStats && t - statsTimer > 400) { statsTimer = t; renderStats(); dirtyStats = false; }
+  flickerLights(t);
+  controls.update(); renderer.render(scene, camera);
+}
+function resize() {
+  const w = v3.clientWidth, h = v3.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); dirtySlice = true;
+}
+addEventListener('resize', resize);
+
+/* ============ Fichiers ============ */
+function serialize() {
+  const list = []; for (let i = 0; i < occ.length; i++) if (occ[i]) list.push(i);
+  const buf = new Uint8Array(list.length * 10);
+  list.forEach((i, k) => {
+    const x = i % P.nx, y = Math.floor(i / P.nx) % P.ny, z = Math.floor(i / (P.nx * P.ny)), c = col[i], o = k * 10;
+    buf[o] = x; buf[o + 1] = y; buf[o + 2] = z; buf[o + 3] = (c >> 16) & 255; buf[o + 4] = (c >> 8) & 255; buf[o + 5] = c & 255;
+    buf[o + 6] = tex[i]; buf[o + 7] = mat[i]; buf[o + 8] = lit[i]; buf[o + 9] = prt[i];
+  });
+  let bin = ''; for (let k = 0; k < buf.length; k += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(k, k + 0x8000));
+  return {
+    format: 'voxelblade-room', version: 1, id: P.id, name: P.name, folder: P.folder, sheet: P.sheet, markers: P.markers, blockSize: BLOCK, size: [P.nx, P.ny, P.nz],
+    textures: TEXTURES.map(t => t.id), materials: MATS.map(m => m.id), lights: LIGHTS.map(l => l.id),
+    presets: P.presets, parts: P.parts.map(p => ({ name: p.name, parent: p.parent, pivot: p.pivot, visible: p.visible })),
+    voxelLayout: 'x,y,z,r,g,b,texture,material,light,part (10 octets par bloc)', voxelCount: list.length, voxels: btoa(bin),
+  };
+}
+function deserialize(d) {
+  if (!d || d.format !== 'voxelblade-room') throw new Error('Ce fichier n\'est pas une salle Voxel Blade');
+  const [nx, ny, nz] = d.size; newProject(d.name || 'Salle', nx, ny, nz);
+  P.presets = Array.isArray(d.presets) && d.presets.length ? d.presets : P.presets;
+  P.id = d.id || null; P.folder = d.folder || 'donjons'; P.sheet = { ...defaultRoomSheet(), ...(d.sheet || {}) }; P.markers = { ...emptyMarkers(), ...(d.markers || {}) };
+  P.parts = (d.parts && d.parts.length ? d.parts : P.parts).map(p => ({ name: p.name, parent: p.parent ?? -1, pivot: p.pivot || [0, 0, 0], visible: p.visible !== false }));
+  const mapT = (d.textures || []).map(id => byId(TEXTURES, id)), mapM = (d.materials || []).map(id => byId(MATS, id)), mapL = (d.lights || []).map(id => byId(LIGHTS, id));
+  const bin = atob(d.voxels || '');
+  for (let o = 0; o + 9 < bin.length; o += 10) {
+    const b = k => bin.charCodeAt(o + k), x = b(0), y = b(1), z = b(2); if (!inB(x, y, z)) continue;
+    const i = idx(x, y, z); occ[i] = 1; col[i] = (b(3) << 16) | (b(4) << 8) | b(5);
+    tex[i] = mapT[b(6)] ?? 0; mat[i] = mapM[b(7)] ?? 0; lit[i] = mapL[b(8)] ?? 0; prt[i] = Math.min(b(9), P.parts.length - 1);
+  }
+}
+const slug = s => (s || 'creature').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'creature';
+function saveFile() {
+  P.name = $('cName').value.trim() || 'Créature';
+  const blob = new Blob([JSON.stringify(serialize())], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = slug(P.name) + '.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000); autosave(); toast('Fichier enregistré : ' + slug(P.name) + '.json');
+}
+function autosave() { P.name = $('cName').value.trim() || 'Créature'; if (lsSet(LS.auto, JSON.stringify(serialize()))) { unsaved = false; $('saveState').textContent = 'sauvegardé dans ce navigateur'; } }
+setInterval(() => { if (unsaved) autosave(); }, 5000);
+$('bSave').onclick = saveFile;
+$('bOpen').onclick = () => $('fileIn').click();
+$('fileIn').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { deserialize(JSON.parse(await f.text())); afterLoad(); toast('« ' + P.name + ' » ouverte'); } catch (err) { toast('Impossible d\'ouvrir : ' + err.message); }
+  e.target.value = '';
+};
+$('cName').onchange = () => { P.name = $('cName').value; markDirty(); };
+function afterLoad() {
+  activePart = 0; $('cName').value = P.name; slice.layer = Math.min(slice.layer, sliceMax());
+  rebuildHelpers(); rebuildPivots(); syncSliceUI(); renderParts(); renderPresets(); frameCamera(); markDirty(); dirtyStats = true; renderRoomSheet(); renderMarkers(); rebuildMarkers();
+}
+// nouveau
+$('bNew').onclick = () => $('dlgNew').showModal();
+$('nCancel').onclick = () => $('dlgNew').close();
+$('nOk').onclick = () => {
+  const cl = v => Math.max(4, Math.min(128, Math.round(+v || 32)));
+  if ($('nStart').value === 'slime') buildSlimeExample(); else newProject($('nName').value || 'Nouvelle créature', cl($('nX').value), cl($('nY').value), cl($('nZ').value));
+  if ($('nStart').value !== 'slime') P.name = $('nName').value || 'Nouvelle créature';
+  $('dlgNew').close(); slice.layer = 0; afterLoad();
+};
+// forme 3D
+$('bShape3D').onclick = () => { $('sCx').value = Math.floor(P.nx / 2); $('sCy').value = Math.floor(P.ny / 2); $('sCz').value = Math.floor(P.nz / 2); $('dlgShape').showModal(); };
+$('sCancel').onclick = () => $('dlgShape').close();
+$('sOk').onclick = () => { shape3D($('sType').value, [+$('sCx').value + 0.5, +$('sCy').value + 0.5, +$('sCz').value + 0.5], [+$('sDx').value, +$('sDy').value, +$('sDz').value], $('sMode').value); $('dlgShape').close(); markDirty(true); };
+$('bFillInside').onclick = () => { fillInside(); markDirty(true); };
+$('bUndo').onclick = undo; $('bRedo').onclick = redo;
+
+/* ============ GitHub : envoi, index des créatures, ouverture ============ */
+function gitCfg() { try { return JSON.parse(lsGet(LS.git) || '{}'); } catch (e) { return {}; } }
+const b64ToUtf8 = b => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, '')), c => c.charCodeAt(0)));
+const utf8ToB64 = str => { const bytes = new TextEncoder().encode(str); let bin = ''; for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000)); return btoa(bin); };
+function apiUrl(c, path) { return `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`; }
+const apiHeaders = c => ({ Authorization: 'Bearer ' + c.token, Accept: 'application/vnd.github+json' });
+async function ghGet(path) { // { json, sha } ou null si absent ; sans jeton : lecture via la page publiée
+  const c = gitCfg();
+  if (c.token && c.owner && c.repo) {
+    const r = await fetch(apiUrl(c, path) + '?ref=' + encodeURIComponent(c.branch || 'main'), { headers: apiHeaders(c), cache: 'no-store' });
+    if (r.status === 404) return null; if (!r.ok) throw new Error(await errText(r));
+    const j = await r.json(); return { sha: j.sha, json: JSON.parse(b64ToUtf8(j.content)) };
+  }
+  const r = await fetch('../' + path + '?v=' + Date.now()); if (!r.ok) return null; return { json: await r.json() };
+}
+async function ghPut(c, path, obj, sha, message) {
+  const r = await fetch(apiUrl(c, path), { method: 'PUT', headers: apiHeaders(c), body: JSON.stringify({ message, content: utf8ToB64(JSON.stringify(obj, null, path.endsWith('index.json') ? 1 : 0)), branch: c.branch || 'main', ...(sha ? { sha } : {}) }) });
+  if (!r.ok) throw new Error(await errText(r));
+}
+async function ghDelete(c, path, sha, message) {
+  const r = await fetch(apiUrl(c, path), { method: 'DELETE', headers: apiHeaders(c), body: JSON.stringify({ message, sha, branch: c.branch || 'main' }) });
+  if (!r.ok && r.status !== 404) throw new Error(await errText(r));
+}
+// index des créatures (catégories + liste), gardé en mémoire
+let catalog = { format: 'voxelblade-rooms-index', version: 1, categories: { donjons: 'Donjons' }, rooms: [] };
+async function loadCatalog() {
+  try { const g = await ghGet('rooms/index.json'); if (g && g.json && g.json.categories) catalog = g.json; } catch (e) { }
+  renderRoomSheet();
+}
+const creaturePath = () => (P.folder ? P.folder + '/' : '') + slug(P.name) + '.json';
+$('bSend').onclick = () => {
+  const c = gitCfg(); $('gOwner').value = c.owner || 'Ilkoko-33233'; $('gRepo').value = c.repo || 'voxel-blade'; $('gBranch').value = c.branch || 'main'; $('gToken').value = c.token || '';
+  P.name = $('cName').value.trim() || 'Créature';
+  $('gPath').textContent = 'Fichier : rooms/' + creaturePath() + ' · catégorie : ' + catLabel(P.folder);
+  $('dlgGit').showModal();
+};
+$('gCancel').onclick = () => $('dlgGit').close();
+$('gOk').onclick = async () => {
+  const c = { owner: $('gOwner').value.trim(), repo: $('gRepo').value.trim(), branch: $('gBranch').value.trim() || 'main', token: $('gToken').value.trim() };
+  if (!c.owner || !c.repo || !c.token) { toast('Renseigne le dépôt et le jeton'); return; }
+  lsSet(LS.git, JSON.stringify(c));
+  P.name = $('cName').value.trim() || 'Créature';
+  const rel = creaturePath(), path = 'rooms/' + rel;
+  $('gOk').disabled = true; $('gOk').textContent = 'Envoi…';
+  try {
+    // créature sans identifiant (ancienne sauvegarde) : si une créature du même nom existe déjà, proposer de la remplacer
+    if (!P.id) {
+      const ig0 = await ghGet('rooms/index.json'), same = ig0 && ig0.json && (ig0.json.rooms || []).find(e => slug(e.name) === slug(P.name));
+      if (same && confirm('Une salle « ' + same.name + ' » existe déjà dans le dépôt (' + catLabel(same.path.split('/').slice(0, -1).join('/')) + ').\nOK : la remplacer par celle-ci · Annuler : l\'envoyer comme une nouvelle créature')) P.id = same.id;
+    }
+    if (!P.id) P.id = slug(P.name) + '-' + Math.random().toString(36).slice(2, 6);
+    // 1. la créature
+    const cur = await ghGet(path);
+    await ghPut(c, path, serialize(), cur && cur.sha, (cur ? 'Mise à jour' : 'Ajout') + ' de la salle « ' + P.name + ' » (éditeur de maps)');
+    // 2. l'index : catégories + entrée de la créature (et suppression de l'ancien fichier si elle a été renommée ou déplacée)
+    const ig = await ghGet('rooms/index.json'), idx = (ig && ig.json && ig.json.categories) ? ig.json : { format: 'voxelblade-rooms-index', version: 1, categories: {}, rooms: [] };
+    idx.rooms = idx.rooms || [];
+    Object.assign(idx.categories, catalog.categories);
+    const segs = P.folder ? P.folder.split('/') : []; segs.forEach((_, k) => { const pth = segs.slice(0, k + 1).join('/'); if (!idx.categories[pth]) idx.categories[pth] = segs[k]; });
+    const old = idx.rooms.find(e => e.id === P.id);
+    if (old && old.path !== rel) { const o = await ghGet('rooms/' + old.path); if (o && o.sha) await ghDelete(c, 'rooms/' + old.path, o.sha, 'Déplacement de la salle « ' + P.name + ' » (éditeur de maps)'); }
+    idx.rooms = idx.rooms.filter(e => e.id !== P.id && e.path !== rel);
+    idx.rooms.push({ id: P.id, name: P.name, path: rel, type: P.sheet.type, openings: P.markers.openings.length, size: [P.nx, P.ny, P.nz] });
+    idx.rooms.sort((a, b) => a.path.localeCompare(b.path));
+    await ghPut(c, 'rooms/index.json', idx, ig && ig.sha, 'Index des salles : « ' + P.name + ' » (éditeur de maps)');
+    catalog = idx; $('dlgGit').close(); autosave(); toast('Envoyé sur GitHub : ' + path);
+  } catch (err) { toast('Échec de l\'envoi : ' + err.message); }
+  $('gOk').disabled = false; $('gOk').textContent = 'Envoyer';
+};
+async function errText(r) {
+  let m = ''; try { m = (await r.json()).message || ''; } catch (e) { }
+  if (r.status === 401) return 'jeton refusé (401)'; if (r.status === 403) return 'accès refusé (403) : vérifie les droits du jeton'; if (r.status === 404) return 'dépôt introuvable (404)';
+  if (r.status === 409) return 'conflit (409) : réessaie dans quelques secondes';
+  return r.status + ' ' + m;
+}
+// ouvrir depuis le dépôt
+$('bOpenGit').onclick = async () => {
+  $('dlgOpen').showModal(); $('openTree').textContent = 'Chargement…';
+  await loadCatalog();
+  const t = $('openTree'); t.innerHTML = '';
+  if (!catalog.rooms.length) { t.textContent = 'Aucune salle dans le dépôt pour l\'instant.'; return; }
+  const byFolder = {}; catalog.rooms.forEach(e => { const f = e.path.split('/').slice(0, -1).join('/'); (byFolder[f] = byFolder[f] || []).push(e); });
+  Object.keys(byFolder).sort().forEach(f => {
+    const h = document.createElement('div'); h.className = 'cat'; h.textContent = catLabel(f) || 'Sans catégorie'; t.append(h);
+    byFolder[f].forEach(e => {
+      const d = document.createElement('div'); d.className = 'cr';
+      d.innerHTML = `<span>${escapeHtml(e.name)}</span><span class="small">${(ROOM_TYPES.find(r => r.id === e.type) || {}).name || ''} · ${e.openings ?? 0} ouverture(s)</span>`;
+      d.onclick = async () => {
+        try { const g = await ghGet('rooms/' + e.path); if (!g) throw new Error('fichier introuvable'); deserialize(g.json); afterLoad(); $('dlgOpen').close(); toast('« ' + P.name + ' » ouverte depuis GitHub'); }
+        catch (err) { toast('Impossible d\'ouvrir : ' + err.message); }
+      };
+      t.append(d);
+    });
+  });
+};
+$('oCancel').onclick = () => $('dlgOpen').close();
+
+function catLabel(path) {
+  if (!path) return '';
+  const segs = path.split('/'); return segs.map((_, k) => catalog.categories[segs.slice(0, k + 1).join('/')] || segs[k]).join(' › ');
+}
+
+/* ============ Gestion des catégories ============ */
+async function openCats() { await loadCatalog(); renderCats(); $('dlgCats').showModal(); }
+function renderCats() {
+  const el = $('catList'); el.innerHTML = '';
+  const keys = Object.keys(catalog.categories).sort();
+  if (!keys.length) { el.textContent = 'Aucune catégorie.'; return; }
+  keys.forEach(k => {
+    const depth = k.split('/').length - 1, hasSub = keys.some(o => o.startsWith(k + '/')), hasCr = catalog.rooms.some(c => c.path.startsWith(k + '/'));
+    const d = document.createElement('div'); d.className = 'catrow'; d.style.paddingLeft = (depth * 18) + 'px';
+    d.innerHTML = `<input type="text" value="${escapeHtml(catalog.categories[k])}"><span class="small">${escapeHtml(k)}</span><button ${hasSub || hasCr ? 'disabled title="Catégorie non vide"' : ''}>Supprimer</button>`;
+    d.querySelector('input').onchange = e => { catalog.categories[k] = e.target.value.trim() || k.split('/').pop(); catsDirty = true; };
+    d.querySelector('button').onclick = () => { delete catalog.categories[k]; if (P.folder === k) P.folder = k.split('/').slice(0, -1).join('/') || 'donjons'; catsDirty = true; renderCats(); };
+    el.append(d);
+  });
+}
+let catsDirty = false;
+$('cCancel').onclick = () => { $('dlgCats').close(); renderRoomSheet(); };
+$('cApply').onclick = async () => {
+  const c = gitCfg(); if (!c.token) { toast('Ajoute d\'abord ton jeton via « Envoyer ▸ GitHub »'); return; }
+  try {
+    const ig = await ghGet('rooms/index.json'), idx = (ig && ig.json && ig.json.categories) ? ig.json : catalog;
+    idx.categories = { ...catalog.categories };
+    await ghPut(c, 'rooms/index.json', idx, ig && ig.sha, 'Index des salles : catégories (éditeur de maps)');
+    catalog = idx; catsDirty = false; toast('Catégories enregistrées sur GitHub'); $('dlgCats').close(); renderRoomSheet();
+  } catch (err) { toast('Échec : ' + err.message); }
+};
+
+
+/* ============ Fiche de la salle ============ */
+const fillOpts = (el, list, cur) => { el.innerHTML = list.map(o => `<option value="${o.id}" ${o.id === cur ? 'selected' : ''}>${escapeHtml(o.name)}</option>`).join(''); };
+function touched() { unsaved = true; $('saveState').textContent = 'modifications non enregistrées'; }
+function renderRoomSheet() {
+  if (!P) return;
+  fillOpts($('rmType'), ROOM_TYPES, P.sheet.type);
+  const cats = { ...catalog.categories }; if (P.folder && !cats[P.folder]) cats[P.folder] = P.folder.split('/').pop();
+  $('rmFolder').innerHTML = Object.keys(cats).sort().map(k => `<option value="${k}" ${k === P.folder ? 'selected' : ''}>${escapeHtml(catLabel(k))}</option>`).join('');
+  $('rmAmbient').value = P.sheet.ambient; $('rmDesc').value = P.sheet.description || '';
+}
+$('rmType').onchange = e => { P.sheet.type = e.target.value; touched(); };
+$('rmFolder').onchange = e => { P.folder = e.target.value; touched(); };
+$('rmAmbient').oninput = e => { P.sheet.ambient = +e.target.value; touched(); applyLighting(); };
+$('rmDesc').oninput = e => { P.sheet.description = e.target.value; touched(); };
+const addCat = parent => {
+  const label = prompt(parent ? 'Nom de la sous-catégorie de « ' + catLabel(parent) + ' »' : 'Nom de la nouvelle catégorie'); if (!label) return;
+  const path = (parent ? parent + '/' : '') + slug(label);
+  catalog.categories[path] = label.trim(); P.folder = path; touched(); renderRoomSheet(); toast('Catégorie « ' + catLabel(path) + ' » créée');
+};
+$('rmAddCat').onclick = () => addCat(''); $('rmAddSub').onclick = () => addCat(P.folder); $('rmManageCats').onclick = openCats;
+
+/* ============ Créatures disponibles (pour les points d'apparition) ============ */
+let creatureCatalog = { categories: {}, creatures: [] };
+async function loadCreatureCatalog() {
+  try { const g = await ghGet('creatures/index.json'); if (g && g.json && g.json.creatures) creatureCatalog = g.json; } catch (e) { }
+  renderMarkers();
+}
+const creatureCatLabel = path => { const segs = path.split('/'); return segs.map((_, k) => creatureCatalog.categories[segs.slice(0, k + 1).join('/')] || segs[k]).join(' › '); };
+
+/* ============ Repères : ouvertures, apparitions, lumières, départ ============ */
+let placing = null, selMarker = null; // { kind: 'openings' | 'spawns' | 'lights' | 'start', i }
+const MK_COLORS = { both: 0x5fd16a, in: 0x3bc9db, out: 0xffa94d, spawn: 0xff4d5e, start: 0x4dabf7 };
+const D2R = Math.PI / 180;
+function startPlacing(kind, i) { placing = { kind, i }; selMarker = { kind, i }; setTool('place'); renderMarkers(); rebuildMarkers(); }
+function placeMarkerAt(x, y, z) {
+  if (!placing) { setTool('pencil'); return; }
+  const m = placing.kind === 'start' ? P.markers.start : P.markers[placing.kind][placing.i]; if (!m) return;
+  m.pos = placing.kind === 'lights' ? [x + 0.5, y + 0.5, z + 0.5] : [x + 0.5, y, z + 0.5];
+  placing = null; setTool('pencil'); touched(); renderMarkers(); rebuildMarkers(); dirtyStats = true; toast('Repère placé');
+}
+const center = () => [P.nx / 2, 1, P.nz / 2];
+$('mkOpen').onclick = () => { P.markers.openings.push({ name: 'Ouverture ' + (P.markers.openings.length + 1), kind: 'both', dir: 'N', pos: center(), w: 4, h: 10 }); startPlacing('openings', P.markers.openings.length - 1); };
+$('mkSpawn').onclick = () => { P.markers.spawns.push({ pos: center(), creature: '', category: Object.keys(creatureCatalog.categories)[0] || 'monstres', levelMin: 1, levelMax: 3, count: 1, radius: 3 }); startPlacing('spawns', P.markers.spawns.length - 1); };
+$('mkLight').onclick = () => { P.markers.lights.push({ pos: [P.nx / 2, 6.5, P.nz / 2], color: '#ffb050', intensity: 1, range: 6, flicker: true }); startPlacing('lights', P.markers.lights.length - 1); };
+$('mkStart').onclick = () => { if (!P.markers.start) P.markers.start = { pos: center(), dir: 'N' }; startPlacing('start', 0); };
+
+function renderMarkers() {
+  const el = $('markerList'); if (!el || !P) return; el.innerHTML = '';
+  const card = (kind, i, title, color, body) => {
+    const d = document.createElement('div'); d.className = 'part' + (selMarker && selMarker.kind === kind && selMarker.i === i ? ' active' : '');
+    d.innerHTML = `<div class="top"><span class="sw" style="width:10px;height:10px;border-radius:50%;background:#${color.toString(16).padStart(6, '0')}"></span><b style="flex:1">${title}</b>
+      <button data-a="place">${placing && placing.kind === kind && placing.i === i ? 'Cliquez un bloc…' : 'Placer'}</button><button data-a="del">×</button></div>${body}`;
+    d.querySelector('.top').onclick = e => { if (e.target.tagName !== 'BUTTON') { selMarker = { kind, i }; renderMarkers(); rebuildMarkers(); } };
+    d.querySelector('[data-a=place]').onclick = () => startPlacing(kind, i);
+    d.querySelector('[data-a=del]').onclick = () => { if (kind === 'start') P.markers.start = null; else P.markers[kind].splice(i, 1); selMarker = null; touched(); renderMarkers(); rebuildMarkers(); dirtyStats = true; };
+    // champs
+    d.querySelectorAll('[data-f]').forEach(inp => {
+      const m = kind === 'start' ? P.markers.start : P.markers[kind][i], f = inp.dataset.f;
+      inp.addEventListener(inp.tagName === 'SELECT' || inp.type === 'checkbox' ? 'change' : 'input', () => {
+        let v = inp.type === 'checkbox' ? inp.checked : inp.type === 'number' ? +inp.value : inp.value;
+        if (f.startsWith('pos')) m.pos[+f.slice(3)] = v;
+        else if (f === 'who') { if (v.startsWith('cat:')) { m.category = v.slice(4); m.creature = ''; } else { m.creature = v.slice(3); m.category = ''; } }
+        else m[f] = v;
+        touched(); rebuildMarkers(); if (f === 'name') d.querySelector('b').textContent = v;
+      });
+    });
+    el.append(d);
+  };
+  const posRow = m => `<div class="sub">Position <input type="number" step="0.5" data-f="pos0" value="${m.pos[0]}" style="width:52px"><input type="number" step="0.5" data-f="pos1" value="${m.pos[1]}" style="width:52px"><input type="number" step="0.5" data-f="pos2" value="${m.pos[2]}" style="width:52px"></div>`;
+  P.markers.openings.forEach((o, i) => card('openings', i, escapeHtml(o.name || 'Ouverture'), MK_COLORS[o.kind] || MK_COLORS.both,
+    `<div class="sub"><input type="text" data-f="name" value="${escapeHtml(o.name || '')}" style="flex:1"></div>
+     <div class="sub"><select data-f="kind">${OPENING_KINDS.map(k => `<option value="${k.id}" ${k.id === o.kind ? 'selected' : ''}>${k.name}</option>`).join('')}</select>
+     <select data-f="dir">${DIRS.map(k => `<option value="${k.id}" ${k.id === o.dir ? 'selected' : ''}>${k.name}</option>`).join('')}</select></div>
+     <div class="sub">Largeur <input type="number" min="1" step="1" data-f="w" value="${o.w}" style="width:46px"> Hauteur <input type="number" min="1" step="1" data-f="h" value="${o.h}" style="width:46px"> <span class="small">blocs</span></div>${posRow(o)}`));
+  const whoOpts = sp => {
+    const cats = Object.keys(creatureCatalog.categories).sort().map(k => `<option value="cat:${k}" ${!sp.creature && sp.category === k ? 'selected' : ''}>Catégorie : ${escapeHtml(creatureCatLabel(k))}</option>`);
+    const crs = creatureCatalog.creatures.map(c => `<option value="id:${c.id}" ${sp.creature === c.id ? 'selected' : ''}>${escapeHtml(c.name)} (niv. ${c.level ?? '?'})</option>`);
+    if (sp.category && !creatureCatalog.categories[sp.category]) cats.unshift(`<option value="cat:${sp.category}" selected>Catégorie : ${escapeHtml(sp.category)}</option>`);
+    return cats.join('') + crs.join('');
+  };
+  P.markers.spawns.forEach((sp, i) => card('spawns', i, 'Apparition ' + (i + 1), MK_COLORS.spawn,
+    `<div class="sub"><select data-f="who" style="flex:1">${whoOpts(sp)}</select></div>
+     <div class="sub">Niveaux <input type="number" min="1" step="1" data-f="levelMin" value="${sp.levelMin}" style="width:44px"> à <input type="number" min="1" step="1" data-f="levelMax" value="${sp.levelMax}" style="width:44px"></div>
+     <div class="sub">Nombre <input type="number" min="1" step="1" data-f="count" value="${sp.count}" style="width:44px"> Rayon <input type="number" min="0" step="0.5" data-f="radius" value="${sp.radius}" style="width:48px"> <span class="small">blocs</span></div>${posRow(sp)}`));
+  P.markers.lights.forEach((l, i) => card('lights', i, 'Lumière ' + (i + 1), parseInt(l.color.slice(1), 16),
+    `<div class="sub"><input type="color" data-f="color" value="${l.color}"> Intensité <input type="number" min="0" step="0.1" data-f="intensity" value="${l.intensity}" style="width:50px"></div>
+     <div class="sub">Portée <input type="number" min="0.5" step="0.5" data-f="range" value="${l.range}" style="width:50px"> m <label><input type="checkbox" data-f="flicker" ${l.flicker ? 'checked' : ''}> vacille (torche)</label></div>${posRow(l)}`));
+  if (P.markers.start) card('start', 0, 'Départ du joueur', MK_COLORS.start,
+    `<div class="sub">Regarde vers <select data-f="dir">${DIRS.slice(0, 4).map(k => `<option value="${k.id}" ${k.id === P.markers.start.dir ? 'selected' : ''}>${k.name}</option>`).join('')}</select></div>${posRow(P.markers.start)}`);
+  if (!el.children.length) el.innerHTML = '<p class="small">Aucun repère : ajoute au moins une ouverture pour pouvoir raccorder la salle.</p>';
+}
+// ----- affichage 3D des repères -----
+const markerGroup = new THREE.Group(); scene.add(markerGroup);
+let pointLights = [];
+const W = p => new THREE.Vector3(p[0] - P.nx / 2, p[1], p[2] - P.nz / 2); // coordonnées blocs → monde de l'éditeur
+function rebuildMarkers() {
+  markerGroup.clear(); pointLights = [];
+  if (!P) return;
+  const isSel = (k, i) => selMarker && selMarker.kind === k && selMarker.i === i;
+  const basic = (c, op = 1) => new THREE.MeshBasicMaterial({ color: c, transparent: op < 1, opacity: op, depthTest: false });
+  P.markers.openings.forEach((o, i) => {
+    const g = new THREE.Group(), c = MK_COLORS[o.kind] || MK_COLORS.both, d = DIRS.find(x => x.id === o.dir) || DIRS[0], vertical = o.dir === 'U' || o.dir === 'D';
+    const w = Math.max(1, o.w), h = Math.max(1, o.h);
+    const frame = new THREE.LineSegments(new THREE.EdgesGeometry(vertical ? new THREE.BoxGeometry(w, 0.2, w) : new THREE.BoxGeometry(w, h, 0.2)), new THREE.LineBasicMaterial({ color: c, depthTest: false }));
+    frame.position.y = vertical ? 0 : h / 2; g.add(frame);
+    const fill = new THREE.Mesh(vertical ? new THREE.BoxGeometry(w, 0.05, w) : new THREE.BoxGeometry(w, h, 0.05), basic(c, isSel('openings', i) ? 0.35 : 0.15)); fill.position.y = frame.position.y; g.add(fill);
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.6, 12), basic(c)); // flèche vers l'extérieur
+    const dv = new THREE.Vector3(...d.v); arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dv);
+    arrow.position.copy(dv.clone().multiplyScalar(1.2)).add(new THREE.Vector3(0, vertical ? 0 : h / 2, 0)); g.add(arrow);
+    const anchor = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 8), basic(0xffffff)); g.add(anchor); // point de raccord
+    if (!vertical) g.rotation.y = o.dir === 'E' || o.dir === 'W' ? Math.PI / 2 : 0;
+    if (!vertical) { arrow.position.set(0, h / 2, (o.dir === 'S' || o.dir === 'E' ? 1 : -1) * 1.2); arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, o.dir === 'S' || o.dir === 'E' ? 1 : -1)); }
+    g.position.copy(W(o.pos)); g.children.forEach(ch => ch.renderOrder = 7); markerGroup.add(g);
+  });
+  P.markers.spawns.forEach((sp, i) => {
+    const g = new THREE.Group();
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(Math.max(0.5, sp.radius), 0.12, 6, 40), basic(MK_COLORS.spawn, isSel('spawns', i) ? 1 : 0.7)); ring.rotation.x = Math.PI / 2; ring.position.y = 0.05; g.add(ring);
+    for (let k = 0; k < Math.min(8, sp.count); k++) { const a = k / Math.max(1, sp.count) * Math.PI * 2, r = sp.count > 1 ? Math.min(sp.radius, 1.2) : 0, m = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.2, 8), basic(MK_COLORS.spawn)); m.position.set(Math.cos(a) * r, 0.6, Math.sin(a) * r); g.add(m); }
+    g.position.copy(W(sp.pos)); g.children.forEach(ch => ch.renderOrder = 7); markerGroup.add(g);
+  });
+  P.markers.lights.forEach((l, i) => {
+    const c = new THREE.Color(l.color), s = new THREE.Mesh(new THREE.SphereGeometry(isSel('lights', i) ? 0.6 : 0.45, 14, 10), basic(c)); s.position.copy(W(l.pos)); s.renderOrder = 7; markerGroup.add(s);
+    if (view.dark) {
+      const pl = new THREE.PointLight(c, 0, l.range / BLOCK, 1); pl.position.copy(W(l.pos)); pl.userData = { base: l.intensity * 40, flicker: l.flicker, seed: i * 7.3 }; pl.intensity = pl.userData.base;
+      markerGroup.add(pl); pointLights.push(pl);
+    }
+  });
+  if (P.markers.start) {
+    const st = P.markers.start, g = new THREE.Group(), c = MK_COLORS.start;
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 7, 12, 1, true), basic(c, 0.35)); body.position.y = 3.5; g.add(body); // ~1,7 m
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.6, 12), basic(c)); arrow.rotation.x = -Math.PI / 2; arrow.position.set(0, 6, -1.4); g.add(arrow);
+    g.rotation.y = { N: 0, W: Math.PI / 2, S: Math.PI, E: -Math.PI / 2 }[st.dir] || 0; g.position.copy(W(st.pos)); g.children.forEach(ch => ch.renderOrder = 7); markerGroup.add(g);
+  }
+}
+// ----- aperçu de l'éclairage du donjon -----
+function applyLighting() {
+  const dark = view.dark, amb = P ? P.sheet.ambient : 0.25;
+  hemi.intensity = dark ? 0.08 + amb * 0.9 : 1.0; sun.intensity = dark ? amb * 0.8 : 1.8;
+  scene.environmentIntensity = dark ? 0.05 + amb * 0.4 : 1;
+  scene.background.set(dark ? 0x07080b : 0x1b2130);
+}
+function flickerLights(t) {
+  if (!view.dark) return;
+  for (const pl of pointLights) { const u = pl.userData; pl.intensity = u.flicker ? u.base * (0.82 + 0.12 * Math.sin(t * 0.011 + u.seed) + 0.06 * Math.sin(t * 0.037 + u.seed * 3)) : u.base; }
+}
+/* ============ Raccourcis ============ */
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || document.querySelector('dialog[open]')) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); return; }
+
+  if (e.key === '[') setLayer(slice.layer - 1); else if (e.key === ']') setLayer(slice.layer + 1);
+  else { const t = TOOLS.find(t => t[2].toLowerCase() === e.key.toLowerCase()); if (t && !e.ctrlKey && !e.metaKey) setTool(t[0]); }
+});
+
+/* ============ Toast ============ */
+let toastT; function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2600); }
+
+/* ============ Démarrage ============ */
+(function start() {
+  let ok = false;
+  try { const d = JSON.parse(lsGet(LS.auto) || 'null'); if (d) { deserialize(d); ok = true; } } catch (e) { }
+  if (!ok) buildSlimeExample();
+  setTool('pencil'); syncBrushUI(); afterLoad(); unsaved = false; $('saveState').textContent = ok ? 'reprise de la dernière session' : '';
+  resize(); requestAnimationFrame(loop); loadCatalog(); loadCreatureCatalog();
+})();
+window.__ed = { placeMarkerAt, get P() { return P; }, occ: () => occ, applyAt, beginStroke, endStroke, undo, redo, serialize, deserialize, view, slice, buckets, setTool, fillInside, shape3D, brush, stats: () => stats };
+</script>
+</body>
+</html>
