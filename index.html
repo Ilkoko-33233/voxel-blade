@@ -27,7 +27,8 @@
   <p id="status">Vérification de la VR…</p>
   <button id="vrBtn" hidden>Entrer en VR</button>
   <button id="deskBtn" class="ghost">Tester à la souris</button>
-  <p class="small">Joue debout, avec environ 2 m libres devant toi.<br>Gâchette : prendre l'épée dans cette main.</p>
+  <p class="small"><a href="skin/" style="color:#9be15d">Éditeur de personnage</a> · <a href="editor/" style="color:#9be15d">Créatures</a> · <a href="maps/" style="color:#9be15d">Maps</a></p>
+  <p class="small">Joue debout, avec environ 2 m libres devant toi.<br>Gâchette : prendre l'épée dans cette main.<br>A + X maintenus 2 s : refaire le réglage de ta taille.</p>
 </div></div>
 <div id="hud" hidden>Souris : trancher · Maj : coup du plat · ZQSD/WASD : marcher · ← → : tourner · Échap : menu</div>
 
@@ -35,6 +36,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MATS, LIGHTS, makeAtlas, makeVoxelMaterial, decodeCreature, completeSheet, evalPart, animUsable, decodeRoom, BLOCK, rotDims, rotXZ, rotDir, pieceTransform, piecePoint } from './shared/look.js';
+import { SKIN_W, SKIN_H, SKIN_PARTS, skinBoxGeometry, makeSkinTexture, skinMaterials, paintDefaultSkin } from './shared/skin.js';
 
 /* ================= Réglages ================= */
 const V = 0.04;               // taille d'un voxel (m)
@@ -590,7 +592,7 @@ function updatePlayer(dt) {
   vignette.material.opacity = Math.min(1, hurtFx * 0.9 + (player.hp / player.maxHp < 0.25 ? 0.25 + 0.1 * Math.sin(time * 5) : 0));
   vignette.visible = vignette.material.opacity > 0.01;
   if (!DUN.loading) transFade = Math.max(0, transFade - dt / 0.8);
-  fade = Math.max(fade, transFade);
+  fade = Math.max(fade, transFade, DUN.active ? headFade : 0);
   blackout.material.opacity = fade; blackout.visible = fade > 0.005;
   wrist.update();
   if (toastT > 0) { toastT -= dt; toastMesh.material.opacity = Math.min(1, toastT / 0.5); toastMesh.visible = toastT > 0; }
@@ -1478,9 +1480,10 @@ function updateLocomotion(dt) {
   const dx = (_fw.x * -mz + _rt.x * mx) * MOVE_SPEED * dt, dz = (_fw.z * -mz + _rt.z * mx) * MOVE_SPEED * dt;
   if (DUN.active) { // murs du donjon : on glisse le long
     const y = rig.position.y, hx = playerPos.x, hz = playerPos.z;
-    if (!bodyBlocked(hx + dx, hz + dz, y)) { rig.position.x += dx; rig.position.z += dz; }
-    else if (!bodyBlocked(hx + dx, hz, y)) rig.position.x += dx;
-    else if (!bodyBlocked(hx, hz + dz, y)) rig.position.z += dz;
+    const R = bodyR();
+    if (!bodyBlocked(hx + dx, hz + dz, y, R, playerH)) { rig.position.x += dx; rig.position.z += dz; }
+    else if (!bodyBlocked(hx + dx, hz, y, R, playerH)) rig.position.x += dx;
+    else if (!bodyBlocked(hx, hz + dz, y, R, playerH)) rig.position.z += dz;
     return;
   }
   rig.position.x += dx; rig.position.z += dz;
@@ -1488,10 +1491,84 @@ function updateLocomotion(dt) {
   if (r > 28) { rig.position.x *= 28 / r; rig.position.z *= 28 / r; }
 }
 
+/* ================= Personnage : skin, taille réelle, bras ================= */
+// Le skin vient de l'éditeur de personnage (« Porter en jeu ») ; la taille est réglée en VR, et tout le personnage suit (bras, corps pour les collisions).
+const EYE_RATIO = 0.93; // hauteur des yeux / taille
+const lsNum = k => { try { return +localStorage.getItem(k) || 0; } catch (e) { return 0; } };
+let playerH = lsNum('voxelblade.height') || 1.6 / EYE_RATIO, pxS = playerH / 42; // pxS = taille d'un pixel du skin en mètres
+const bodyR = () => 4 * pxS; // demi-largeur du torse : rayon du corps pour les collisions
+function setPlayerHeight(h, save = true) {
+  playerH = THREE.MathUtils.clamp(h, 1.0, 2.3); pxS = playerH / 42;
+  if (save) try { localStorage.setItem('voxelblade.height', playerH.toFixed(3)); } catch (e) { }
+}
+const skinCanvas = document.createElement('canvas'); skinCanvas.width = SKIN_W; skinCanvas.height = SKIN_H;
+const skinCtx = skinCanvas.getContext('2d'); paintDefaultSkin(skinCtx);
+const skinTex = makeSkinTexture(THREE, skinCanvas), skinM = skinMaterials(THREE, skinTex);
+try {
+  const src = localStorage.getItem('voxelblade.skin');
+  if (src) { const img = new Image(); img.onload = () => { if (img.width === SKIN_W && img.height === SKIN_H) { skinCtx.clearRect(0, 0, SKIN_W, SKIN_H); skinCtx.drawImage(img, 0, 0); skinTex.needsUpdate = true; } }; img.src = src; }
+} catch (e) { }
+skinMat.visible = false; // l'ancien poing est remplacé par la main du skin
+// un bras = deux segments (haut du bras, avant-bras + main), chacun avec sa couche de base et sa superposition
+function makeArm(key) {
+  const p = SKIN_PARTS[key];
+  const seg = s => { const g = new THREE.Group(); g.add(new THREE.Mesh(skinBoxGeometry(THREE, p, { seg: s, origin: 'top' }), skinM.base), new THREE.Mesh(skinBoxGeometry(THREE, p, { seg: s, origin: 'top', overlay: true }), skinM.over)); g.visible = false; scene.add(g); return g; };
+  return { upper: seg([7, 14]), fore: seg([0, 7]) };
+}
+const arms = { right: makeArm('armR'), left: makeArm('armL') };
+const aS = new V3(), aE = new V3(), aT = new V3(), aF = new V3(), aR = new V3(), aP = new V3(), aN = new V3(), aRef = new V3(), aX = new V3(), aY = new V3(), aZ = new V3(), aM = new THREE.Matrix4();
+function orientSeg(g, A, B, ref, len) { // segment accroché en A, descendant vers B, face avant tournée vers « ref », étiré à « len » mètres
+  aY.subVectors(A, B).normalize(); aZ.copy(ref).addScaledVector(aY, -ref.dot(aY));
+  if (aZ.lengthSq() < 1e-6) aZ.set(0, 0, 1).addScaledVector(aY, -aY.z); aZ.normalize(); aX.crossVectors(aY, aZ);
+  aM.makeBasis(aX, aY, aZ); g.quaternion.setFromRotationMatrix(aM); g.position.copy(A); g.scale.set(pxS, len / 7, pxS); g.visible = true;
+}
+// cinématique inverse à deux segments : épaule estimée depuis la tête, main sur la manette, coude vers le bas et l'extérieur
+function solveArm(arm, side, holder) {
+  if (!holder) { arm.upper.visible = arm.fore.visible = false; return; }
+  camera.getWorldPosition(aS); camera.getWorldDirection(aF); aF.y = 0; if (aF.lengthSq() < 1e-6) aF.set(0, 0, -1); aF.normalize(); aR.set(-aF.z, 0, aF.x);
+  aS.y -= 4.6 * pxS; aS.addScaledVector(aR, side * 6 * pxS).addScaledVector(aF, -2.5 * pxS);
+  holder.getWorldPosition(aT);
+  // longueurs réelles d'un bras (le skin est étiré en hauteur pour suivre) : bras 19 % de la taille, avant-bras jusqu'au poing 17 %
+  const a = 0.19 * playerH, b = 0.17 * playerH; aN.subVectors(aT, aS); let d = aN.length(); if (d < 1e-4) { aN.set(0, -1, 0); d = 1e-4; } else aN.divideScalar(d);
+  d = THREE.MathUtils.clamp(d, Math.abs(a - b) + 1e-3, a + b - 1e-4);
+  const x = (a * a - b * b + d * d) / (2 * d), h = Math.sqrt(Math.max(0, a * a - x * x));
+  aP.set(0, -1, 0).addScaledVector(aR, side * 0.5).addScaledVector(aF, -0.4); aP.addScaledVector(aN, -aP.dot(aN));
+  if (aP.lengthSq() < 1e-6) aP.copy(aR).multiplyScalar(side); aP.normalize();
+  aE.copy(aS).addScaledVector(aN, x).addScaledVector(aP, h);
+  orientSeg(arm.upper, aS, aE, aF, a);
+  aRef.set(0, 0, -1).transformDirection(holder.matrixWorld); // le pouce (face avant du bras) suit l'avant de la manette
+  orientSeg(arm.fore, aE, aT, aRef, b + 2 * pxS);
+}
+function updateArms() {
+  let R = null, L = null;
+  if (mode === 'vr') for (const g of grips) { const s = g.userData.source; if (!s) continue; if (s.handedness === 'left') L = g; else R = g; }
+  else if (mode === 'desktop') R = deskHand;
+  solveArm(arms.right, 1, R); solveArm(arms.left, -1, L);
+  if (mode === 'desktop') arms.right.upper.visible = arms.right.fore.visible = false; // à la souris, le bras collé à la caméra masquerait la vue : seulement en VR
+}
+// réglage de la taille : à la première entrée en VR, puis A + X maintenus 2 s pour recommencer
+const calib = { t: -1, hold: 0 };
+function startCalibration() { calib.t = 3.5; calib.shown = -1; }
+function updateCalibration(dt) {
+  if (mode !== 'vr') return;
+  let a = false, x = false;
+  for (const src of renderer.xr.getSession()?.inputSources || []) { const b = src.gamepad?.buttons?.[4]; if (b?.pressed) { if (src.handedness === 'right') a = true; else x = true; } }
+  if (a && x && calib.t < 0) { calib.hold += dt; if (calib.hold > 2) { calib.hold = 0; startCalibration(); } } else calib.hold = 0;
+  if (calib.t < 0) return;
+  calib.t -= dt; const n = Math.ceil(calib.t);
+  if (n !== calib.shown && calib.t > 0) { calib.shown = n; toast(n > 3 ? 'Tiens-toi droit, regarde devant toi' : 'Réglage de ta taille… ' + n, '#7fd8ff'); }
+  if (calib.t <= 0) {
+    calib.t = -1; const eye = camera.position.y; // hauteur des yeux au-dessus du sol réel
+    if (eye < 0.9) { toast('Réglage impossible : tiens-toi debout', '#ff6b4a'); return; }
+    setPlayerHeight(eye / EYE_RATIO); toast('Taille : ' + playerH.toFixed(2).replace('.', ',') + ' m', '#9be15d');
+  }
+}
+renderer.xr.addEventListener('sessionstart', () => { setTimeout(() => { if (!lsNum('voxelblade.height.vr')) { startCalibration(); try { localStorage.setItem('voxelblade.height.vr', '1'); } catch (e) { } } }, 1500); });
+
 /* ================= Donjons ================= */
 // Le joueur choisit un donjon sur le panneau du village ; les salles (blocs de 24 cm) sont assemblées selon le fichier du donjon.
 const DUN = { active: false, data: null, group: null, solid: null, min: [0, 0, 0], dims: [1, 1, 1], lights: [], pool: [], monsters: [], portal: null, ambient: 0.25, t: 0, fall: 0, lightTimer: 0 };
-let floorY = 0, transFade = 0;
+let floorY = 0, transFade = 0, headFade = 0;
 const roomFiles = new Map(), creatureFiles = new Map();
 const roomMats = LIGHTS.map(L => makeVoxelMaterial(THREE, L.id, ATLAS, { repeat: 6 }));
 const loadRoomFile = path => { if (!roomFiles.has(path)) roomFiles.set(path, fetchJSON('rooms/' + path).then(decodeRoom)); return roomFiles.get(path); };
@@ -1626,7 +1703,7 @@ function setDungeonAmbience(on) {
 }
 function teleportRig(pos, yaw) {
   rig.rotation.y = yaw; rig.updateMatrixWorld(true); camera.getWorldPosition(_h0);
-  rig.position.x += pos.x - _h0.x; rig.position.z += pos.z - _h0.z; rig.position.y = pos.y; swordState.hasPrev = false; floorY = pos.y;
+  rig.position.x += pos.x - _h0.x; rig.position.z += pos.z - _h0.z; rig.position.y = pos.y; swordState.hasPrev = false; floorY = pos.y; DUN.lastHead = null;
 }
 function makePortal() {
   const g = new THREE.Group();
@@ -1646,6 +1723,20 @@ function updateDungeon(dt) {
     DUN.pool.forEach((pl, k) => { const l = near[k] && near[k][0]; pl.userData.l = l; if (l) { pl.position.copy(l.pos); pl.color.copy(l.color); pl.distance = l.range; } else pl.intensity = 0; });
   }
   for (const pl of DUN.pool) { const l = pl.userData.l; if (!l) continue; const f = l.flicker ? 0.82 + 0.12 * Math.sin(time * 11 + l.seed) + 0.06 * Math.sin(time * 37 + l.seed * 3) : 1; pl.intensity = l.intensity * 6 * f; }
+  // déplacement réel (dans la pièce) : le corps ne traverse pas les murs, on recale le monde
+  const R = bodyR(), y0 = rig.position.y; camera.getWorldPosition(_h0);
+  const L = DUN.lastHead;
+  // on vérifie tout le trajet depuis la dernière position valide (un grand pas ne doit pas sauter par-dessus un mur fin)
+  const pathBlocked = (x, z) => { if (!L) return bodyBlocked(x, z, y0, R, playerH); const n = Math.max(1, Math.ceil(Math.hypot(x - L.x, z - L.z) / 0.06)); for (let i = 1; i <= n; i++) if (bodyBlocked(L.x + (x - L.x) * i / n, L.z + (z - L.z) * i / n, y0, R, playerH)) return true; return false; };
+  if (pathBlocked(_h0.x, _h0.z)) {
+    if (L) for (const [x, z] of [[_h0.x, L.z], [L.x, _h0.z], [L.x, L.z]]) if (!pathBlocked(x, z)) { rig.position.x += x - _h0.x; rig.position.z += z - _h0.z; _h0.x = x; _h0.z = z; break; }
+  }
+  if (!bodyBlocked(_h0.x, _h0.z, y0, R, playerH)) DUN.lastHead = { x: _h0.x, z: _h0.z };
+  camera.getWorldPosition(playerPos);
+  // tête dans un mur malgré tout (on se penche) : la vue s'assombrit
+  const e = 0.1 * pxS / 0.04; let inWall = solidAt(playerPos.x, playerPos.y, playerPos.z);
+  for (const [ox, oy, oz] of NB6) if (!inWall && solidAt(playerPos.x + ox * e, playerPos.y + oy * e, playerPos.z + oz * e)) inWall = true;
+  headFade += ((inWall ? 1 : 0) - headFade) * Math.min(1, dt * 12);
   // sol, escaliers, chute
   const g = groundAt(playerPos.x, playerPos.z, rig.position.y);
   if (g > rig.position.y - 0.02 && g <= rig.position.y + 0.55) { rig.position.y = g; DUN.fall = 0; }
@@ -1762,13 +1853,15 @@ renderer.setAnimationLoop(() => {
   for (const m of monsters) m.update(dt);
   dunBoard.update(dt);
   updateDungeon(dt);
+  updateArms();
+  updateCalibration(dt);
   updateSpores(dt);
   updatePlayer(dt);
   updateParticles(dt);
   updateNumbers(dt);
   renderer.render(scene, camera);
 });
-window.__game = { DUN, enterDungeon, exitDungeon, solidAt, get monsters() { return monsters; }, player, spores, damagePlayer, gainXp, bumpSwing: () => ++swingId, camera, paintPlate, CAT_COLORS, rig, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
+window.__game = { arms, solveArm, grips, get playerH() { return playerH; }, setPlayerHeight, skinTex, DUN, enterDungeon, exitDungeon, solidAt, get monsters() { return monsters; }, player, spores, damagePlayer, gainXp, bumpSwing: () => ++swingId, camera, paintPlate, CAT_COLORS, rig, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
 </script>
 </body>
 </html>

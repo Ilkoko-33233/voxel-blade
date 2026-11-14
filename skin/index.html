@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voxel Blade — Éditeur de personnage</title>
+<style>
+  :root{--bg:#12151c;--panel:#1a1f29;--panel2:#222836;--line:#2e3646;--txt:#e8e6e0;--mut:#9aa3b2;--acc:#5fd16a;--warn:#ff6b4a}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:13px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
+  button,select,input{font:inherit;color:inherit}
+  [hidden]{display:none!important}
+  button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 9px;cursor:pointer;white-space:nowrap}
+  button:hover{border-color:#4a5568}
+  button.on{background:#2b4a33;border-color:var(--acc);color:#d6ffd9}
+  button.primary{background:#2b4a33;border-color:var(--acc)}
+  input[type=text],input[type=password],select{background:#0f1218;border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+  #app{display:grid;grid-template-rows:auto 1fr;grid-template-columns:230px 1fr 1fr;height:100%}
+  header{grid-column:1/4;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header .title{font-weight:700;letter-spacing:.05em;margin-right:6px}
+  header .sep{width:1px;height:24px;background:var(--line);margin:0 2px}
+  #sName{width:150px}
+  aside{background:var(--panel);overflow:auto;padding:10px;border-right:1px solid var(--line);min-height:0}
+  h3{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);margin:14px 0 6px;font-weight:600}
+  h3:first-child{margin-top:2px}
+  .tools{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  .row{display:flex;align-items:center;gap:6px;margin:5px 0;flex-wrap:wrap}
+  #color{width:54px;height:34px;padding:0;border:1px solid var(--line);border-radius:6px;background:none}
+  #recent{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
+  #recent div{aspect-ratio:1;border-radius:3px;border:1px solid rgba(255,255,255,.15);cursor:pointer}
+  #view3d,#flatPane{position:relative;min-width:0;min-height:0}
+  #view3d{border-right:1px solid var(--line)}
+  #view3d canvas{display:block;touch-action:none}
+  #flat{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair;image-rendering:pixelated}
+  .hint{position:absolute;left:8px;bottom:6px;color:var(--mut);font-size:11.5px;pointer-events:none;background:rgba(18,21,28,.75);padding:3px 6px;border-radius:5px;max-width:calc(100% - 16px)}
+  #info{position:absolute;right:8px;top:6px;color:var(--txt);font-size:12px;pointer-events:none;background:rgba(18,21,28,.75);padding:3px 6px;border-radius:5px}
+  .parts{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  .parts button{font-size:12px;padding:4px}
+  dialog{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-width:300px;max-width:92vw}
+  dialog::backdrop{background:rgba(0,0,0,.55)}
+  dialog h2{margin:0 0 10px;font-size:16px}
+  .list{max-height:50vh;overflow:auto;display:flex;flex-direction:column;gap:4px;margin:8px 0}
+  .list button{text-align:left}
+  .msg{color:var(--mut);min-height:18px;margin:6px 0}
+  #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#2b4a33;border:1px solid var(--acc);padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:10}
+  #toast.err{background:#4a2b2b;border-color:var(--warn)}
+  @media (max-width:820px){
+    #app{grid-template-columns:1fr;grid-template-rows:auto auto 45vh 1fr;overflow:auto;height:auto;min-height:100%}
+    html,body{overflow:auto}
+    header{grid-column:1}
+    aside{border-right:0;border-bottom:1px solid var(--line)}
+    #view3d{border-right:0;border-bottom:1px solid var(--line)}
+    #flatPane{height:70vh}
+  }
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="title">PERSONNAGE</span>
+    <input type="text" id="sName" value="Mon personnage" title="Nom du skin">
+    <button id="bNew" title="Repartir du skin par défaut">Nouveau</button>
+    <button id="bOpen">Ouvrir…</button><input type="file" id="fileIn" accept="image/png" hidden>
+    <button id="bSave" title="Télécharger l'image du skin (PNG)">Enregistrer</button>
+    <span class="sep"></span>
+    <button id="bUndo" title="Ctrl+Z">↶</button><button id="bRedo" title="Ctrl+Y">↷</button>
+    <span class="sep"></span>
+    <button id="bWear" class="primary" title="Utiliser ce skin dans le jeu sur cet appareil">Porter en jeu</button>
+    <button id="bSend" title="Envoyer sur GitHub (dossier skins/)">Envoyer</button>
+    <button id="bOpenGit" title="Ouvrir un skin envoyé sur GitHub">Ouvrir depuis GitHub</button>
+  </header>
+  <aside>
+    <h3>Outils</h3>
+    <div class="tools">
+      <button data-tool="pen" class="on">✏️ Pinceau</button>
+      <button data-tool="erase">🧽 Gomme</button>
+      <button data-tool="pick">💧 Pipette</button>
+      <button data-tool="fill">🪣 Remplir</button>
+    </div>
+    <div class="row"><button id="bOrbit" title="Sur le modèle 3D : le doigt / clic gauche fait tourner la vue au lieu de peindre">🔄 Tourner la vue</button></div>
+    <div class="row"><label><input type="checkbox" id="mirror"> Symétrie bras / jambes</label></div>
+    <h3>Couleur</h3>
+    <div class="row"><input type="color" id="color" value="#3f6e4a"><span id="hex" style="color:var(--mut)">#3f6e4a</span></div>
+    <div id="recent"></div>
+    <h3>Couche</h3>
+    <div class="tools">
+      <button data-layer="base" class="on">Base</button>
+      <button data-layer="over">Superposition</button>
+    </div>
+    <div class="row"><label><input type="checkbox" id="showOver" checked> Afficher la superposition</label></div>
+    <p style="color:var(--mut);font-size:12px;margin:4px 0">La superposition se pose par-dessus la base (vêtements, capuche, armure). La gomme la rend transparente.</p>
+    <h3>Parties visibles</h3>
+    <div class="parts" id="parts"></div>
+    <h3>Aperçu</h3>
+    <div class="row"><label><input type="checkbox" id="spin"> Rotation automatique</label></div>
+    <div class="row"><label><input type="checkbox" id="grid" checked> Grille sur l'image</label></div>
+  </aside>
+  <div id="view3d"><div id="info"></div><div class="hint">Peins directement sur le modèle · glisser à côté : tourner · molette / pincer : zoom</div></div>
+  <div id="flatPane"><canvas id="flat"></canvas><div class="hint">Image à plat (64 × 96) · molette : zoom · clic droit / deux doigts : déplacer</div></div>
+</div>
+
+<dialog id="dlgGit">
+  <h2>Ouvrir un skin envoyé</h2>
+  <div class="list" id="gitList"></div>
+  <div class="msg" id="gitMsg"></div>
+  <div class="row"><button id="gitClose">Fermer</button></div>
+</dialog>
+<dialog id="dlgSend">
+  <h2>Envoyer sur GitHub</h2>
+  <p class="msg" id="sendInfo"></p>
+  <div class="msg" id="sendMsg"></div>
+  <div class="row"><button id="sendCancel">Annuler</button><button id="sendOk" class="primary">Envoyer</button></div>
+</dialog>
+<div id="toast"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { SKIN_W, SKIN_H, SKIN_PARTS, SKIN_FORMAT, faceRects, partRect, makeSkinTexture, buildAvatar, paintDefaultSkin, FACE_NAMES } from '../shared/skin.js';
+
+const $ = id => document.getElementById(id);
+const LS = { draft: 'voxelblade.skin.draft', wear: 'voxelblade.skin', wearName: 'voxelblade.skin.name', git: 'voxelblade.editor.github', recent: 'voxelblade.skin.recent' };
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } };
+function toast(t, err = false) { const e = $('toast'); e.textContent = t; e.className = err ? 'err' : ''; e.style.opacity = 1; clearTimeout(toast.t); toast.t = setTimeout(() => e.style.opacity = 0, 2600); }
+
+/* ===== image du skin ===== */
+const skin = document.createElement('canvas'); skin.width = SKIN_W; skin.height = SKIN_H;
+const sctx = skin.getContext('2d', { willReadFrequently: true });
+const tex = makeSkinTexture(THREE, skin);
+// carte pixel → (partie, face, couche) pour savoir où l'on peut peindre
+const owner = new Array(SKIN_W * SKIN_H).fill(null);
+for (const [k, p] of Object.entries(SKIN_PARTS)) for (const ov of [false, true]) for (const [f, r] of Object.entries(faceRects(p, ov)))
+  for (let y = r[1]; y < r[1] + r[3]; y++) for (let x = r[0]; x < r[0] + r[2]; x++) owner[x + y * SKIN_W] = { part: k, face: f, over: ov, fx: x - r[0], fy: y - r[1], rect: r };
+
+/* ===== historique ===== */
+const undoStack = [], redoStack = [];
+const snap = () => sctx.getImageData(0, 0, SKIN_W, SKIN_H);
+function pushUndo() { undoStack.push(snap()); if (undoStack.length > 80) undoStack.shift(); redoStack.length = 0; }
+function undo() { if (!undoStack.length) return; redoStack.push(snap()); sctx.putImageData(undoStack.pop(), 0, 0); changed(); }
+function redo() { if (!redoStack.length) return; undoStack.push(snap()); sctx.putImageData(redoStack.pop(), 0, 0); changed(); }
+let saveT = 0;
+function changed() { tex.needsUpdate = true; drawFlat(); clearTimeout(saveT); saveT = setTimeout(() => lsSet(LS.draft, JSON.stringify({ name: $('sName').value, png: skin.toDataURL() })), 400); }
+
+/* ===== outils ===== */
+const state = { tool: 'pen', layer: 'base', orbit: false, color: '#3f6e4a' };
+const hexToRgb = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const rgbToHex = (r, g, b) => '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+let recent = []; try { recent = JSON.parse(lsGet(LS.recent) || '[]'); } catch (e) { }
+function useColor(c) { state.color = c; $('color').value = c; $('hex').textContent = c; }
+function addRecent(c) { recent = [c, ...recent.filter(x => x !== c)].slice(0, 16); lsSet(LS.recent, JSON.stringify(recent)); drawRecent(); }
+function drawRecent() { $('recent').innerHTML = ''; recent.forEach(c => { const d = document.createElement('div'); d.style.background = c; d.title = c; d.onclick = () => useColor(c); $('recent').appendChild(d); }); }
+// pixel symétrique (bras droit ↔ gauche, jambe droite ↔ gauche) : même face « en miroir »
+const MIRROR = { armR: 'armL', armL: 'armR', legR: 'legL', legL: 'legR' };
+function mirrorPixel(x, y) {
+  const o = owner[x + y * SKIN_W]; if (!o || !MIRROR[o.part]) return null;
+  const face = { right: 'left', left: 'right' }[o.face] || o.face, R = faceRects(SKIN_PARTS[MIRROR[o.part]], o.over)[face];
+  const fx = (face === 'top' || face === 'bottom' || o.face === face) ? R[2] - 1 - o.fx : R[2] - 1 - o.fx;
+  return [R[0] + fx, R[1] + o.fy];
+}
+function setPixel(x, y, rgba) {
+  const o = owner[x + y * SKIN_W]; if (!o) return;
+  const d = sctx.createImageData(1, 1); d.data.set(rgba); sctx.putImageData(d, x, y);
+}
+function getPixel(x, y) { return sctx.getImageData(x, y, 1, 1).data; }
+function paintAt(x, y) {
+  const o = owner[x + y * SKIN_W]; if (!o) return false;
+  if (state.tool === 'pick') { const p = getPixel(x, y); if (p[3] > 0) { useColor(rgbToHex(p[0], p[1], p[2])); addRecent(state.color); } return false; }
+  const rgba = state.tool === 'erase' ? [0, 0, 0, 0] : [...hexToRgb(state.color), 255];
+  const targets = [[x, y]]; if ($('mirror').checked) { const m = mirrorPixel(x, y); if (m) targets.push(m); }
+  if (state.tool === 'fill') { for (const [tx, ty] of targets) floodFill(tx, ty, rgba); return true; }
+  for (const [tx, ty] of targets) setPixel(tx, ty, rgba);
+  return true;
+}
+// remplissage : pixels voisins de même couleur, dans la même face
+function floodFill(x, y, rgba) {
+  const o = owner[x + y * SKIN_W], r = o.rect, img = snap(), D = img.data, i0 = (x + y * SKIN_W) * 4, ref = [D[i0], D[i0 + 1], D[i0 + 2], D[i0 + 3]];
+  if (ref.every((v, k) => v === rgba[k])) return;
+  const same = i => D[i] === ref[0] && D[i + 1] === ref[1] && D[i + 2] === ref[2] && D[i + 3] === ref[3];
+  const st = [[x, y]], seen = new Set();
+  while (st.length) {
+    const [cx, cy] = st.pop(), key = cx + cy * SKIN_W;
+    if (cx < r[0] || cy < r[1] || cx >= r[0] + r[2] || cy >= r[1] + r[3] || seen.has(key)) continue;
+    seen.add(key); const i = key * 4; if (!same(i)) continue;
+    D[i] = rgba[0]; D[i + 1] = rgba[1]; D[i + 2] = rgba[2]; D[i + 3] = rgba[3];
+    st.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+  }
+  sctx.putImageData(img, 0, 0);
+}
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { state.tool = b.dataset.tool; document.querySelectorAll('[data-tool]').forEach(x => x.classList.toggle('on', x === b)); });
+document.querySelectorAll('[data-layer]').forEach(b => b.onclick = () => setLayer(b.dataset.layer));
+function setLayer(l) { state.layer = l; document.querySelectorAll('[data-layer]').forEach(x => x.classList.toggle('on', x.dataset.layer === l)); if (l === 'over') { $('showOver').checked = true; applyVis(); } drawFlat(); }
+$('bOrbit').onclick = () => { state.orbit = !state.orbit; $('bOrbit').classList.toggle('on', state.orbit); };
+$('color').oninput = e => useColor(e.target.value);
+$('color').onchange = e => addRecent(e.target.value);
+
+/* ===== aperçu 3D ===== */
+const view = $('view3d');
+const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1b2130);
+const camera = new THREE.PerspectiveCamera(35, 1, 0.5, 500); camera.position.set(28, 34, 80);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445066, 1.6));
+const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(30, 60, 50); scene.add(dl);
+const dl2 = new THREE.DirectionalLight(0xbfd4ff, 0.6); dl2.position.set(-40, 20, -40); scene.add(dl2);
+const avatar = buildAvatar(THREE, tex); scene.add(avatar.group);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(16, 40), new THREE.MeshStandardMaterial({ color: 0x2a3244 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -0.05; scene.add(floor);
+const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 21, 0); controls.enableDamping = true; controls.update();
+const partVis = Object.fromEntries(Object.keys(SKIN_PARTS).map(k => [k, true]));
+for (const [k, p] of Object.entries(SKIN_PARTS)) {
+  const b = document.createElement('button'); b.textContent = p.name; b.className = 'on';
+  b.onclick = () => { partVis[k] = !partVis[k]; b.classList.toggle('on', partVis[k]); applyVis(); };
+  $('parts').appendChild(b);
+}
+function applyVis() { for (const [k, P] of Object.entries(avatar.parts)) { P.group.visible = partVis[k]; P.over.visible = $('showOver').checked; } }
+$('showOver').onchange = applyVis;
+function resize() {
+  const r = view.getBoundingClientRect(); renderer.setSize(r.width, r.height); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix();
+  const f = $('flat'), fr = f.getBoundingClientRect(); f.width = fr.width * devicePixelRatio; f.height = fr.height * devicePixelRatio; fitFlat(); drawFlat();
+}
+addEventListener('resize', resize);
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+function hit3D(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1); ray.setFromCamera(ndc, camera);
+  const meshes = Object.entries(avatar.parts).filter(([k]) => partVis[k]).map(([, P]) => state.layer === 'over' ? P.over : P.base);
+  const h = ray.intersectObjects(meshes, false)[0]; if (!h) return null;
+  // on se décale très légèrement vers l'intérieur pour tomber dans le bon pixel au bord des faces
+  const px = Math.min(SKIN_W - 1, Math.floor(h.uv.x * SKIN_W)), py = Math.min(SKIN_H - 1, Math.floor((1 - h.uv.y) * SKIN_H));
+  return [px, py];
+}
+let painting3D = false, lastPx = '';
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (state.orbit || e.button !== 0) return;
+  const h = hit3D(e); if (!h) return;
+  controls.enabled = false; painting3D = true; pushUndo(); lastPx = '';
+  if (paint3D(h)) changed();
+}, true);
+renderer.domElement.addEventListener('pointermove', e => {
+  const h = hit3D(e); showInfo(h);
+  if (!painting3D || !h) return; if (paint3D(h)) changed();
+});
+addEventListener('pointerup', () => { if (painting3D) { painting3D = false; controls.enabled = true; if (state.tool === 'pen') addRecent(state.color); } });
+function paint3D([x, y]) { const k = x + ',' + y; if (k === lastPx) return false; lastPx = k; return paintAt(x, y); }
+function showInfo(h) { const o = h && owner[h[0] + h[1] * SKIN_W]; $('info').textContent = o ? SKIN_PARTS[o.part].name + ' · ' + FACE_NAMES[o.face] + (o.over ? ' · superposition' : '') : ''; }
+renderer.setAnimationLoop(() => { if ($('spin').checked && !painting3D) avatar.group.rotation.y += 0.01; controls.update(); renderer.render(scene, camera); });
+
+/* ===== image à plat ===== */
+const flat = $('flat'), fctx = flat.getContext('2d');
+const fv = { s: 6, ox: 10, oy: 10 };
+function fitFlat() { const s = Math.max(2, Math.floor(Math.min((flat.width - 20) / SKIN_W, (flat.height - 20) / SKIN_H))); fv.s = s; fv.ox = Math.floor((flat.width - SKIN_W * s) / 2); fv.oy = Math.floor((flat.height - SKIN_H * s) / 2); }
+function drawFlat() {
+  const g = fctx, s = fv.s; g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, flat.width, flat.height); g.imageSmoothingEnabled = false;
+  // fond en damier pour les zones transparentes
+  for (let y = 0; y < SKIN_H; y++) for (let x = 0; x < SKIN_W; x++) { const o = owner[x + y * SKIN_W]; g.fillStyle = !o ? '#101318' : ((x + y) & 1 ? '#2a3040' : '#333a4c'); g.fillRect(fv.ox + x * s, fv.oy + y * s, s, s); }
+  g.drawImage(skin, fv.ox, fv.oy, SKIN_W * s, SKIN_H * s);
+  // couche inactive assombrie
+  for (const [k, p] of Object.entries(SKIN_PARTS)) {
+    const inactive = partRect(p, state.layer === 'base'); g.fillStyle = 'rgba(16,19,24,.55)';
+    for (const r of Object.values(faceRects(p, state.layer === 'base'))) g.fillRect(fv.ox + r[0] * s, fv.oy + r[1] * s, r[2] * s, r[3] * s);
+  }
+  if ($('grid').checked && s >= 5) { g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1; g.beginPath(); for (let x = 0; x <= SKIN_W; x++) { g.moveTo(fv.ox + x * s + .5, fv.oy); g.lineTo(fv.ox + x * s + .5, fv.oy + SKIN_H * s); } for (let y = 0; y <= SKIN_H; y++) { g.moveTo(fv.ox, fv.oy + y * s + .5); g.lineTo(fv.ox + SKIN_W * s, fv.oy + y * s + .5); } g.stroke(); }
+  // contours des faces et noms des parties
+  g.font = `${Math.max(9, Math.round(s * 1.5))}px system-ui`; g.textBaseline = 'top';
+  for (const [k, p] of Object.entries(SKIN_PARTS)) for (const ov of [false, true]) {
+    const active = ov === (state.layer === 'over');
+    g.strokeStyle = active ? 'rgba(95,209,106,.8)' : 'rgba(154,163,178,.35)'; g.lineWidth = 1;
+    for (const r of Object.values(faceRects(p, ov))) g.strokeRect(fv.ox + r[0] * s + .5, fv.oy + r[1] * s + .5, r[2] * s - 1, r[3] * s - 1);
+    const pr = partRect(p, ov); g.fillStyle = active ? 'rgba(232,230,224,.85)' : 'rgba(154,163,178,.5)';
+    g.fillText(p.name + (ov ? ' +' : ''), fv.ox + pr[0] * s + 2, fv.oy + pr[1] * s + 2);
+  }
+}
+function flatPixel(e) {
+  const r = flat.getBoundingClientRect(), x = Math.floor(((e.clientX - r.left) * devicePixelRatio - fv.ox) / fv.s), y = Math.floor(((e.clientY - r.top) * devicePixelRatio - fv.oy) / fv.s);
+  return x >= 0 && y >= 0 && x < SKIN_W && y < SKIN_H ? [x, y] : null;
+}
+let flatPaint = false, flatPan = null; const touches = new Map();
+flat.addEventListener('contextmenu', e => e.preventDefault());
+flat.addEventListener('pointerdown', e => {
+  flat.setPointerCapture(e.pointerId); touches.set(e.pointerId, [e.clientX, e.clientY]);
+  if (e.button === 2 || e.button === 1 || touches.size === 2) { flatPaint = false; flatPan = { x: e.clientX, y: e.clientY, ox: fv.ox, oy: fv.oy }; return; }
+  const p = flatPixel(e); if (!p) return; const o = owner[p[0] + p[1] * SKIN_W]; if (!o) return;
+  if (o.over !== (state.layer === 'over')) setLayer(o.over ? 'over' : 'base'); // on bascule sur la couche touchée
+  pushUndo(); flatPaint = true; lastPx = ''; if (paint3D(p)) changed();
+});
+flat.addEventListener('pointermove', e => {
+  touches.set(e.pointerId, [e.clientX, e.clientY]);
+  if (flatPan) { fv.ox = flatPan.ox + (e.clientX - flatPan.x) * devicePixelRatio; fv.oy = flatPan.oy + (e.clientY - flatPan.y) * devicePixelRatio; drawFlat(); return; }
+  const p = flatPixel(e); showInfo(p);
+  if (flatPaint && p) { const o = owner[p[0] + p[1] * SKIN_W]; if (o && o.over === (state.layer === 'over') && paint3D(p)) changed(); }
+});
+const endFlat = e => { touches.delete(e.pointerId); if (flatPaint && state.tool === 'pen') addRecent(state.color); flatPaint = false; if (!touches.size) flatPan = null; };
+flat.addEventListener('pointerup', endFlat); flat.addEventListener('pointercancel', endFlat);
+flat.addEventListener('wheel', e => {
+  e.preventDefault(); const r = flat.getBoundingClientRect(), mx = (e.clientX - r.left) * devicePixelRatio, my = (e.clientY - r.top) * devicePixelRatio;
+  const ns = Math.max(2, Math.min(40, fv.s + (e.deltaY < 0 ? 1 : -1))); fv.ox = mx - (mx - fv.ox) * ns / fv.s; fv.oy = my - (my - fv.oy) * ns / fv.s; fv.s = ns; drawFlat();
+}, { passive: false });
+$('grid').onchange = drawFlat;
+
+/* ===== fichiers ===== */
+function loadImage(src, name) {
+  return new Promise((res, rej) => {
+    const img = new Image(); img.onload = () => {
+      if (img.width !== SKIN_W || img.height !== SKIN_H) { toast(`Image de ${img.width}×${img.height} : il faut ${SKIN_W}×${SKIN_H}`, true); return rej(); }
+      pushUndo(); sctx.clearRect(0, 0, SKIN_W, SKIN_H); sctx.drawImage(img, 0, 0); if (name) $('sName').value = name; changed(); res();
+    }; img.onerror = () => { toast('Image illisible', true); rej(); }; img.src = src;
+  });
+}
+$('bNew').onclick = () => { if (!confirm('Repartir du skin par défaut ? (Ctrl+Z pour revenir)')) return; pushUndo(); paintDefaultSkin(sctx); $('sName').value = 'Mon personnage'; changed(); };
+$('bOpen').onclick = () => $('fileIn').click();
+$('fileIn').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => loadImage(rd.result, f.name.replace(/\.png$/i, '')); rd.readAsDataURL(f); e.target.value = ''; };
+const slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'skin';
+$('bSave').onclick = () => { const a = document.createElement('a'); a.href = skin.toDataURL('image/png'); a.download = slug($('sName').value) + '.png'; a.click(); };
+$('bWear').onclick = () => { if (lsSet(LS.wear, skin.toDataURL('image/png')) && lsSet(LS.wearName, $('sName').value)) toast('Ce skin sera porté en jeu sur cet appareil'); else toast('Impossible d\'enregistrer sur cet appareil', true); };
+$('bUndo').onclick = undo; $('bRedo').onclick = redo;
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); $('bSave').click(); }
+  else if (e.key === 'b' || e.key === 'p') document.querySelector('[data-tool=pen]').click();
+  else if (e.key === 'e') document.querySelector('[data-tool=erase]').click();
+  else if (e.key === 'i') document.querySelector('[data-tool=pick]').click();
+  else if (e.key === 'g' || e.key === 'f') document.querySelector('[data-tool=fill]').click();
+});
+$('sName').oninput = changed;
+
+/* ===== GitHub (même jeton que les éditeurs de créatures et de maps) ===== */
+function gitCfg() { try { return JSON.parse(lsGet(LS.git) || '{}'); } catch (e) { return {}; } }
+const hasToken = c => c.token && c.owner && c.repo;
+function apiUrl(c, path) { return `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`; }
+const apiHeaders = c => ({ Authorization: 'Bearer ' + c.token, Accept: 'application/vnd.github+json' });
+const b64ToUtf8 = b => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, '')), c => c.charCodeAt(0)));
+const utf8ToB64 = str => { const bytes = new TextEncoder().encode(str); let bin = ''; for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000)); return btoa(bin); };
+async function errText(r) {
+  let m = ''; try { m = (await r.json()).message || ''; } catch (e) { }
+  if (r.status === 401) return 'jeton refusé (401)'; if (r.status === 403) return 'accès refusé (403) : vérifie les droits du jeton'; if (r.status === 404) return 'dépôt introuvable (404)';
+  if (r.status === 409) return 'conflit (409) : réessaie dans quelques secondes'; return r.status + ' ' + m;
+}
+async function ghRaw(path) { // { sha, b64 } ou null
+  const c = gitCfg(); const r = await fetch(apiUrl(c, path) + '?ref=' + encodeURIComponent(c.branch || 'main'), { headers: apiHeaders(c), cache: 'no-store' });
+  if (r.status === 404) return null; if (!r.ok) throw new Error(await errText(r)); const j = await r.json(); return { sha: j.sha, b64: j.content };
+}
+async function ghPut(path, b64, sha, message) {
+  const c = gitCfg(); const r = await fetch(apiUrl(c, path), { method: 'PUT', headers: apiHeaders(c), body: JSON.stringify({ message, content: b64, branch: c.branch || 'main', ...(sha ? { sha } : {}) }) });
+  if (!r.ok) throw new Error(await errText(r));
+}
+async function loadIndex() {
+  if (hasToken(gitCfg())) { const g = await ghRaw('skins/index.json'); return { sha: g?.sha, json: g ? JSON.parse(b64ToUtf8(g.b64)) : null }; }
+  const r = await fetch('../skins/index.json?v=' + Date.now()); return { json: r.ok ? await r.json() : null };
+}
+$('bSend').onclick = () => {
+  const c = gitCfg(), name = $('sName').value.trim() || 'Mon personnage';
+  $('sendInfo').textContent = hasToken(c) ? `« ${name} » sera envoyé dans skins/${slug(name)}.png sur ${c.owner}/${c.repo}.` : 'Aucun jeton GitHub sur cet appareil : configure-le d\'abord dans l\'éditeur de créatures (bouton GitHub), il sera repris ici.';
+  $('sendOk').disabled = !hasToken(c); $('sendMsg').textContent = ''; $('dlgSend').showModal();
+};
+$('sendCancel').onclick = () => $('dlgSend').close();
+$('sendOk').onclick = async () => {
+  const name = $('sName').value.trim() || 'Mon personnage', id = slug(name), path = `${id}.png`;
+  $('sendOk').disabled = true; $('sendMsg').textContent = 'Envoi…';
+  try {
+    const old = await ghRaw('skins/' + path);
+    if (old && !confirm(`Un skin « ${name} » existe déjà : le remplacer ?`)) { $('sendMsg').textContent = 'Annulé.'; $('sendOk').disabled = false; return; }
+    await ghPut('skins/' + path, skin.toDataURL('image/png').split(',')[1], old?.sha, `${old ? 'Mise à jour' : 'Ajout'} du skin « ${name} » (éditeur de personnage)`);
+    const idx = await loadIndex(), J = idx.json || { format: SKIN_FORMAT + 's-index', version: 1, skins: [] };
+    J.skins = J.skins.filter(s => s.id !== id); J.skins.push({ id, name, path }); J.skins.sort((a, b) => a.name.localeCompare(b.name));
+    await ghPut('skins/index.json', utf8ToB64(JSON.stringify(J, null, 1)), idx.sha, `Index des skins : « ${name} » (éditeur de personnage)`);
+    $('dlgSend').close(); toast('Skin envoyé sur GitHub');
+  } catch (e) { $('sendMsg').textContent = 'Erreur : ' + e.message; }
+  $('sendOk').disabled = false;
+};
+$('bOpenGit').onclick = async () => {
+  $('gitList').innerHTML = ''; $('gitMsg').textContent = 'Chargement…'; $('dlgGit').showModal();
+  try {
+    const J = (await loadIndex()).json; const list = J?.skins || [];
+    $('gitMsg').textContent = list.length ? '' : 'Aucun skin envoyé pour l\'instant.';
+    for (const s of list) {
+      const b = document.createElement('button'); b.textContent = s.name; $('gitList').appendChild(b);
+      b.onclick = async () => {
+        try {
+          let src; if (hasToken(gitCfg())) { const g = await ghRaw('skins/' + s.path); src = 'data:image/png;base64,' + g.b64.replace(/\s/g, ''); } else src = '../skins/' + s.path + '?v=' + Date.now();
+          await loadImage(src, s.name); $('dlgGit').close(); toast('Skin ouvert');
+        } catch (e) { $('gitMsg').textContent = 'Erreur : ' + (e?.message || 'image illisible'); }
+      };
+    }
+  } catch (e) { $('gitMsg').textContent = 'Erreur : ' + e.message; }
+};
+$('gitClose').onclick = () => $('dlgGit').close();
+
+/* ===== démarrage ===== */
+useColor(state.color); drawRecent(); applyVis();
+let draft = null; try { draft = JSON.parse(lsGet(LS.draft) || 'null'); } catch (e) { }
+if (draft?.png) { const img = new Image(); img.onload = () => { sctx.drawImage(img, 0, 0); $('sName').value = draft.name || 'Mon personnage'; tex.needsUpdate = true; drawFlat(); }; img.src = draft.png; }
+else paintDefaultSkin(sctx);
+tex.needsUpdate = true;
+requestAnimationFrame(resize);
+window.__skin = { skin, sctx, avatar, state, owner, paintAt, changed, mirrorPixel };
+</script>
+</body>
+</html>
