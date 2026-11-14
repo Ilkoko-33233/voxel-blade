@@ -28,6 +28,18 @@
     16,
     30
    ]
+  },
+  {
+   "id": "salle-triple-example-5zdm",
+   "name": "Salle triple example",
+   "path": "donjons/salle-triple-example.json",
+   "type": "combat",
+   "openings": 6,
+   "size": [
+    30,
+    20,
+    15
+   ]
   }
  ]
 }
