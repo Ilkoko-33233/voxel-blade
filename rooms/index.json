@@ -1,0 +1,21 @@
+{
+ "format": "voxelblade-rooms-index",
+ "version": 1,
+ "categories": {
+  "donjons": "Donjons"
+ },
+ "rooms": [
+  {
+   "id": "salle-d-exemple-yaqc",
+   "name": "Salle d'exemple",
+   "path": "donjons/salle-d-exemple.json",
+   "type": "combat",
+   "openings": 2,
+   "size": [
+    30,
+    16,
+    30
+   ]
+  }
+ ]
+}
