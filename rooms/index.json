@@ -30,6 +30,18 @@
    ]
   },
   {
+   "id": "salle-escalier-example-3cdt",
+   "name": "Salle escalier example",
+   "path": "donjons/salle-escalier-example.json",
+   "type": "combat",
+   "openings": 3,
+   "size": [
+    18,
+    20,
+    11
+   ]
+  },
+  {
    "id": "salle-triple-example-5zdm",
    "name": "Salle triple example",
    "path": "donjons/salle-triple-example.json",
