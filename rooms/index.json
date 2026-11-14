@@ -7,8 +7,8 @@
  "rooms": [
   {
    "id": "couloir-d-example-43c7",
-   "name": "Couloir d'example",
-   "path": "donjons/couloir-d-example.json",
+   "name": "Couloir d'example H6",
+   "path": "donjons/couloir-d-example-h6.json",
    "type": "combat",
    "openings": 2,
    "size": [
