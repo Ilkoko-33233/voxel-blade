@@ -1620,9 +1620,9 @@ function exitDungeon(silent = false) {
 }
 let savedMonsters = null;
 function setDungeonAmbience(on) {
-  hemi.intensity = on ? 0.06 + DUN.ambient * 0.9 : 1.4; sun.intensity = on ? DUN.ambient * 0.6 : 2.2;
-  scene.background.set(on ? 0x050608 : 0x8ec5ff); scene.fog.color.set(on ? 0x050608 : 0x8ec5ff); scene.fog.near = on ? 6 : 18; scene.fog.far = on ? 28 : 55;
-  scene.environmentIntensity = on ? 0.12 + DUN.ambient * 0.4 : 0.6;
+  hemi.intensity = on ? DUN.ambient * 0.08 : 1.4; sun.intensity = on ? 0 : 2.2; // donjon : seules les torches éclairent
+  scene.background.set(on ? 0x000000 : 0x8ec5ff); scene.fog.color.set(on ? 0x000000 : 0x8ec5ff); scene.fog.near = on ? 6 : 18; scene.fog.far = on ? 28 : 55;
+  scene.environmentIntensity = on ? DUN.ambient * 0.03 : 0.6;
 }
 function teleportRig(pos, yaw) {
   rig.rotation.y = yaw; rig.updateMatrixWorld(true); camera.getWorldPosition(_h0);
