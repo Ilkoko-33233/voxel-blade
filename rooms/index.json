@@ -6,6 +6,18 @@
  },
  "rooms": [
   {
+   "id": "couloir-d-example-43c7",
+   "name": "Couloir d'example",
+   "path": "donjons/couloir-d-example.json",
+   "type": "combat",
+   "openings": 2,
+   "size": [
+    40,
+    20,
+    10
+   ]
+  },
+  {
    "id": "salle-d-exemple-yaqc",
    "name": "Salle d'exemple",
    "path": "donjons/salle-d-exemple.json",
