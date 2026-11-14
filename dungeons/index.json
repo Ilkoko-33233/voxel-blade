@@ -1,0 +1,1 @@
+{"format": "voxelblade-dungeons-index", "version": 1, "categories": {"donjons": "Donjons"}, "dungeons": [{"id": "donjon-test", "name": "Donjon test", "path": "donjons/donjon-test.json", "level": 1, "pieces": 3}]}

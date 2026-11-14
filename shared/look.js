@@ -98,6 +98,15 @@ export function makeVoxelMaterial(THREE, lightId, atlas, opts = {}) {
 // Renvoie les cubes décodés avec les index des catalogues ci-dessus.
 export function decodeCreature(d) {
   if (!d || d.format !== 'voxelblade-creature') throw new Error('fichier de créature invalide');
+  return decodeVoxelFile(d);
+}
+// salle de donjon : mêmes blocs (10 octets) + repères et fiche
+export function decodeRoom(d) {
+  if (!d || d.format !== 'voxelblade-room') throw new Error('fichier de salle invalide');
+  const r = decodeVoxelFile(d);
+  return { ...r, markers: { openings: [], spawns: [], lights: [], start: null, ...(d.markers || {}) }, sheet: { ...defaultRoomSheet(), ...(d.sheet || {}) } };
+}
+function decodeVoxelFile(d) {
   const byId = (list, id) => Math.max(0, list.findIndex(o => o.id === id));
   const mapT = (d.textures || []).map(id => byId(TEXTURES, id)), mapM = (d.materials || []).map(id => byId(MATS, id)), mapL = (d.lights || []).map(id => byId(LIGHTS, id));
   const bin = atob(d.voxels || ''), n = Math.floor(bin.length / 10), out = [];
@@ -176,3 +185,25 @@ export const DIRS = [ // sens de sortie d'une ouverture (vers l'extérieur de la
 ];
 export const OPENING_KINDS = [{ id: 'both', name: 'Entrée et sortie' }, { id: 'in', name: 'Entrée seulement' }, { id: 'out', name: 'Sortie seulement' }];
 export function defaultRoomSheet() { return { version: 1, type: 'combat', description: '', ambient: 0.25 }; }
+
+/* ===== Assemblage des salles en donjon : rotation par quarts de tour autour de Y ===== */
+// rot = 0..3 quarts de tour dans le sens horaire vu de dessus (N → E → S → W). Coordonnées en blocs.
+export const rotDims = (size, rot) => (rot & 1) ? [size[2], size[1], size[0]] : [size[0], size[1], size[2]];
+export function rotXZ(x, z, size, rot) {
+  const nx = size[0], nz = size[2];
+  switch (rot & 3) { case 0: return [x, z]; case 1: return [nz - z, x]; case 2: return [nx - x, nz - z]; default: return [z, nx - x]; }
+}
+const HDIRS = ['N', 'E', 'S', 'W'];
+export const rotDir = (dir, rot) => { const i = HDIRS.indexOf(dir); return i < 0 ? dir : HDIRS[(i + rot) & 3]; };
+export const oppositeDir = d => ({ N: 'S', S: 'N', E: 'W', W: 'E', U: 'D', D: 'U' })[d];
+// ouvertures d'une pièce placée, en coordonnées du donjon
+export function pieceOpenings(room, piece) {
+  return (room.markers.openings || []).map((o, k) => {
+    const [x, z] = rotXZ(o.pos[0], o.pos[2], room.size, piece.rot);
+    return { index: k, name: o.name, kind: o.kind, w: o.w, h: o.h, dir: rotDir(o.dir, piece.rot), pos: [x + piece.pos[0], o.pos[1] + piece.pos[1], z + piece.pos[2]] };
+  });
+}
+// un point de la salle (repère) en coordonnées du donjon
+export function piecePoint(room, piece, p) { const [x, z] = rotXZ(p[0], p[2], room.size, piece.rot); return [x + piece.pos[0], p[1] + piece.pos[1], z + piece.pos[2]]; }
+// transformation 3D d'une pièce : origine locale déplacée puis rotation (rotation.y = −rot × 90°)
+export function pieceTransform(room, piece) { const [ox, oz] = rotXZ(0, 0, room.size, piece.rot); return { offset: [piece.pos[0] + ox, piece.pos[1], piece.pos[2] + oz], rotY: -(piece.rot & 3) * Math.PI / 2 }; }

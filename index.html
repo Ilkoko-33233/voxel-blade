@@ -34,7 +34,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { MATS, LIGHTS, makeAtlas, makeVoxelMaterial, decodeCreature, completeSheet, evalPart, animUsable } from './shared/look.js';
+import { MATS, LIGHTS, makeAtlas, makeVoxelMaterial, decodeCreature, completeSheet, evalPart, animUsable, decodeRoom, BLOCK, rotDims, rotXZ, rotDir, pieceTransform, piecePoint } from './shared/look.js';
 
 /* ================= Réglages ================= */
 const V = 0.04;               // taille d'un voxel (m)
@@ -104,7 +104,7 @@ camera.rotation.set(-0.68, 0, 0);
 const rig = new THREE.Group(); // le « corps » du joueur : se déplace et tourne au joystick
 scene.add(rig); rig.add(camera);
 
-scene.add(new THREE.HemisphereLight(0xeaf4ff, 0x4d6b38, 1.4));
+const hemi = new THREE.HemisphereLight(0xeaf4ff, 0x4d6b38, 1.4); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff2d8, 2.2);
 sun.position.set(6, 10, 4);
 scene.add(sun);
@@ -123,7 +123,7 @@ const clearing = new THREE.Mesh(new THREE.CircleGeometry(4.2, 32), new THREE.Mes
 clearing.rotation.x = -Math.PI / 2; clearing.position.y = 0.003;
 scene.add(clearing);
 
-const decor = [];
+const decor = []; let decorMesh = null;
 const box = (x, y, z, sx, sy, sz, c, ry = 0) => decor.push([x, y, z, sx, sy, sz, c, ry]);
 function tree(x, z) {
   const h = 1.6 + rnd() * 1.6, s = 1.3 + rnd() * 0.9;
@@ -161,7 +161,7 @@ box(-1.9, 0.55, -2.0, 0.1, 1.1, 0.1, 0x5b3a1e); // poteau du panneau
   const m = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial(), decor.length);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new V3(), s = new V3(), c = new THREE.Color(), e = new THREE.Euler();
   decor.forEach((d, i) => { p.set(d[0], d[1], d[2]); s.set(d[3], d[4], d[5]); q.setFromEuler(e.set(0, d[7], 0)); m.setMatrixAt(i, m4.compose(p, q, s)); m.setColorAt(i, c.setHex(d[6])); });
-  scene.add(m);
+  scene.add(m); decorMesh = m;
 }
 
 /* ================= Panneau d'info ================= */
@@ -271,7 +271,7 @@ function updateParticles(dt) {
     pVel[j] *= drag; pVel[j + 2] *= drag;
     pPos[j] += pVel[j] * dt; pPos[j + 1] += pVel[j + 1] * dt; pPos[j + 2] += pVel[j + 2] * dt;
     const s = pLife[i] > 0 ? pSize[i] * Math.sqrt(pLife[i] / pMax[i]) : 0;
-    if (pPos[j + 1] < s / 2) { pPos[j + 1] = s / 2; pVel[j + 1] *= -0.3; pVel[j] *= 0.6; pVel[j + 2] *= 0.6; }
+    if (pPos[j + 1] < floorY + s / 2) { pPos[j + 1] = floorY + s / 2; pVel[j + 1] *= -0.3; pVel[j] *= 0.6; pVel[j + 2] *= 0.6; }
     a[o] = s; a[o + 1] = 0; a[o + 2] = 0; a[o + 3] = 0;
     a[o + 4] = 0; a[o + 5] = s; a[o + 6] = 0; a[o + 7] = 0;
     a[o + 8] = 0; a[o + 9] = 0; a[o + 10] = s; a[o + 11] = 0;
@@ -567,6 +567,7 @@ function damagePlayer(n) {
   }
 }
 function respawn() {
+  if (DUN.active) exitDungeon(true);
   rig.rotation.y = 0; rig.updateMatrixWorld(true); camera.getWorldPosition(_h0);
   rig.position.x += RESPAWN[0] - _h0.x; rig.position.z += RESPAWN[1] - _h0.z;
   swordState.hasPrev = false; player.hp = player.maxHp;
@@ -588,6 +589,8 @@ function updatePlayer(dt) {
   }
   vignette.material.opacity = Math.min(1, hurtFx * 0.9 + (player.hp / player.maxHp < 0.25 ? 0.25 + 0.1 * Math.sin(time * 5) : 0));
   vignette.visible = vignette.material.opacity > 0.01;
+  if (!DUN.loading) transFade = Math.max(0, transFade - dt / 0.8);
+  fade = Math.max(fade, transFade);
   blackout.material.opacity = fade; blackout.visible = fade > 0.005;
   wrist.update();
   if (toastT > 0) { toastT -= dt; toastMesh.material.opacity = Math.min(1, toastT / 0.5); toastMesh.visible = toastT > 0; }
@@ -653,7 +656,7 @@ class Spore {
     if (swordNear(p, 0.13)) { this.burst(14); playTink(); haptic(0.5, 30); this.remove(); return false; }            // tranchée / parée
     chestPos(_h1);
     if (p.distanceTo(playerPos) < 0.22 || p.distanceTo(_h1) < 0.3) { this.burst(10); damagePlayer(this.dmg); this.remove(); return false; }
-    if (p.y < 0.05 || this.life <= 0) { this.burst(6); this.remove(); return false; }
+    if (p.y < floorY + 0.05 || this.life <= 0 || solidAt(p.x, p.y, p.z)) { this.burst(6); this.remove(); return false; }
     return true;
   }
 }
@@ -723,9 +726,10 @@ class Monster {
     this.slotOf = new Int32Array(n).fill(-1);
     this.alive = new Uint8Array(n); this.vel = new V3(); this.lastThud = 0; this.stun = 0; this.jy = 0; this.jv = 0; this.num = null; this.yaw = 0; this.phase = rnd() * 6;
     this.plate = new Plate(); this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0; this.wp = new V3();
-    this.state = 'dead'; this.timer = 0.3 + (slot || 0.6) * 0.2;
+    this.state = 'dead'; this.timer = 0.3 + (slot || 0.6) * 0.2; this.baseY = 0; // hauteur du sol (donjons)
     this.group.visible = false;
   }
+  inLeash() { return this.home3 ? playerPos.distanceTo(this.home3) < 14 : playerInLeash(); }
   matOf(i) { return MATERIALS[MAT_IDS[this.matIdx[i]]]; }
   isCore(i) { return !!this.matOf(i).core; }
   // couleur affichée : s'assombrit (ou pâlit) à mesure que le cube perd ses PV
@@ -795,6 +799,7 @@ class Monster {
     this.aliveCount = n; this.hp = this.maxHp = this.kind.hp;
     if (this.kind.behavior === 'passive') { this.pickWaypoint(); this.group.position.copy(this.wp); this.pickWaypoint(); }
     else if (this.kind.behavior === 'idle') { this.home = this.kind.home || [dirOf(this.slot).x * 2.4, dirOf(this.slot).z * 2.4]; this.group.position.set(this.home[0], 0, this.home[1]); }
+    else if (this.spawnAt) this.group.position.copy(this.spawnAt);
     else { const d = dirOf(this.slot - rig.rotation.y); this.group.position.set(playerPos.x + d.x * 5.5, 0, playerPos.z + d.z * 5.5); }
     this.group.scale.setScalar(0.001); this.group.visible = true;
     this.engagedUntil = -1; this.fleeUntil = -1; this.defending = false; this.wait = 0;
@@ -961,7 +966,7 @@ class Monster {
     const g = this.group;
     if (!this.attacks.length || this.state !== 'alive') return false;
     if (!this.atk) {
-      if (player.dead || !playerInLeash() || this.stun > 0) return false;
+      if (player.dead || !this.inLeash() || this.stun > 0) return false;
       this.atkCd -= dt; if (this.atkCd > 0) return false;
       const dist = Math.hypot(playerPos.x - g.position.x, playerPos.z - g.position.z);
       const ok = this.attacks.filter(a => dist <= a.range && !this.attackLost(a)); if (!ok.length) return false;   // une attaque à portée, au hasard
@@ -976,7 +981,7 @@ class Monster {
       else { const p = 1 + 0.1 * k * Math.sin(a.t * 22); g.scale.set(p, 1 + 0.06 * k, p); }
       if (a.t >= A.wind) {
         g.scale.set(1, 1, 1);
-        if (A.type === 'leap') { a.phase = 'leap'; a.t = 0; a.from = g.position.clone(); chestPos(a.to = new V3()); a.to.y = Math.max(0, a.to.y - this.model.height * 0.5); }
+        if (A.type === 'leap') { a.phase = 'leap'; a.t = 0; a.from = g.position.clone(); chestPos(a.to = new V3()); a.to.y = Math.max(this.baseY, a.to.y - this.model.height * 0.5); }
         else if (animUsable(this.strikeAnim(A))) { a.phase = 'strike'; a.t = 0; a.shot = false; } // le tir part au repère « tir »
         else { this.spit(A); this.endAttack(); }
       }
@@ -996,16 +1001,16 @@ class Monster {
     let ax = g.position.x - playerPos.x, az = g.position.z - playerPos.z; const al = Math.hypot(ax, az) || 1; ax /= al; az /= al;
     if (swordNear(_cen, this.model.radius * 0.85)) {                     // paré !
       this.vel.set(0, 0, 0); this.impulse(ax * 3.5, az * 3.5, 3.5, false); this.stun = 1.3;
-      this.jy = Math.max(0, g.position.y); this.jv = 1.5; g.scale.set(1, 1, 1);
+      this.jy = Math.max(0, g.position.y - this.baseY); this.jv = 1.5; g.scale.set(1, 1, 1);
       playClang(); haptic(1, 70); this.mat.emissive.setHex(0xffffff); this.mat.emissiveIntensity = 0.8; this.endAttack(); return true;
     }
     chestPos(_h0);
     const S = this.strikeAnim(A), imp = S && animUsable(S) && (S.markers || []).find(q => q.type === 'impact');
     if ((!imp || a.t >= imp.t) && _cen.distanceTo(_h0) < this.model.radius * 0.7 + 0.2) {          // touché (à partir du repère « impact » s'il y en a un)
       damagePlayer(A.dmg); this.impulse(ax * 2.5, az * 2.5, 3, false); this.stun = 0.8;
-      this.jy = Math.max(0, g.position.y); this.jv = 0; g.scale.set(1, 1, 1); this.endAttack(); return true;
+      this.jy = Math.max(0, g.position.y - this.baseY); this.jv = 0; g.scale.set(1, 1, 1); this.endAttack(); return true;
     }
-    if (k >= 1) { this.jy = Math.max(0, g.position.y); this.jv = 0; g.scale.set(1, 1, 1); this.endAttack(); }  // esquivé : il retombe
+    if (k >= 1) { this.jy = Math.max(0, g.position.y - this.baseY); this.jv = 0; g.scale.set(1, 1, 1); this.endAttack(); }  // esquivé : il retombe
     return true;
   }
   spit(A, part = null) {
@@ -1067,7 +1072,7 @@ class Monster {
       d.t += dt; const g = P.group;
       d.vel.y -= 9.8 * dt; g.position.addScaledVector(d.vel, dt);
       g.rotation.x += d.spin.x * dt; g.rotation.y += d.spin.y * dt; g.rotation.z += d.spin.z * dt;
-      if (g.position.y < 0.06) { g.position.y = 0.06; d.vel.y *= -0.3; d.vel.x *= 0.6; d.vel.z *= 0.6; d.spin.multiplyScalar(0.6); }
+      if (g.position.y < this.baseY + 0.06) { g.position.y = this.baseY + 0.06; d.vel.y *= -0.3; d.vel.x *= 0.6; d.vel.z *= 0.6; d.spin.multiplyScalar(0.6); }
       if (d.t > 3.5) { const k = Math.max(0, 1 - (d.t - 3.5) / 0.6); g.scale.setScalar(k || 1e-3); if (k <= 0) { g.visible = false; P.debris = null; } }
     }
   }
@@ -1122,7 +1127,7 @@ class Monster {
   }
   update(dt) {
     this.updateDebris(dt);
-    if (this.state === 'dead') { this.plate.update(dt, this, false, 0); this.timer -= dt; if (this.timer <= 0) this.spawn(); return; }
+    if (this.state === 'dead') { this.plate.update(dt, this, false, 0); if (this.noRespawn && this.spawnedOnce) return; this.timer -= dt; if (this.timer <= 0) { this.spawnedOnce = true; this.spawn(); } return; }
     const g = this.group;
     if (this.state === 'spawning') {
       const spA = this.anims.spawn, custom = animUsable(spA), dur = custom ? Math.max(0.2, spA.duration) : 0.6;
@@ -1151,18 +1156,24 @@ class Monster {
     } else { // va vers sa cible et reste entre keepMin et keepMax d'elle… tant qu'elle est dans la clairière
       let tx, tz;
       const dP = Math.hypot(playerPos.x - g.position.x, playerPos.z - g.position.z);
-      const hunting = playerInLeash() && !player.dead && (dP < (this.kind.aggro ?? 8) || time < this.engagedUntil);
+      const hunting = this.inLeash() && !player.dead && (dP < (this.kind.aggro ?? 8) || time < this.engagedUntil);
       if (hunting) {
         const kMin = this.kind.keepMin ?? 1.0, kMax = this.kind.keepMax ?? 1.4, keep = Math.min(kMax, Math.max(kMin, dP));
         const d = dirOf(this.slot - rig.rotation.y); tx = playerPos.x + d.x * keep; tz = playerPos.z + d.z * keep;
-      } else { const d = dirOf(this.slot); tx = d.x * 2.4; tz = d.z * 2.4; }
+      } else if (this.home3) { tx = this.home3.x; tz = this.home3.z; } else { const d = dirOf(this.slot); tx = d.x * 2.4; tz = d.z * 2.4; }
       mx = tx - g.position.x; mz = tz - g.position.z; const l = Math.hypot(mx, mz);
       if (l > 0.04) { mx /= l; mz /= l; step = Math.min(l, spd * dt); } else mx = mz = 0;
     }
     const moving = step > 0 && this.stun <= 0;
     this.moveRate = moving ? THREE.MathUtils.clamp(step / dt / (this.kind.speed || 1.1), 0.3, 2) : 1;
+    const ox = g.position.x, oz = g.position.z;
     if (moving) { g.position.x += mx * step; g.position.z += mz * step; }
     g.position.x += this.vel.x * dt; g.position.z += this.vel.z * dt; this.vel.multiplyScalar(Math.exp(-dt * 4));
+    if (DUN.active && !atkCtl && bodyBlocked(g.position.x, g.position.z, this.baseY, Math.min(0.35, this.model.radius * 0.6), Math.max(0.6, this.model.height))) { // murs du donjon
+      if (!bodyBlocked(g.position.x, oz, this.baseY, Math.min(0.35, this.model.radius * 0.6), Math.max(0.6, this.model.height))) g.position.z = oz;
+      else if (!bodyBlocked(ox, g.position.z, this.baseY, Math.min(0.35, this.model.radius * 0.6), Math.max(0.6, this.model.height))) g.position.x = ox;
+      else { g.position.x = ox; g.position.z = oz; } this.vel.set(0, 0, 0);
+    }
     // ne jamais être poussé dans le joueur
     if (!atkCtl) { const px = g.position.x - playerPos.x, pz = g.position.z - playerPos.z, pd = Math.hypot(px, pz), minD = this.model.radius * 0.8 + 0.25;
       if (pd < minD && pd > 1e-4) { g.position.x = playerPos.x + px / pd * minD; g.position.z = playerPos.z + pz / pd * minD; } }
@@ -1177,16 +1188,16 @@ class Monster {
     // animation
     this.moving = moving;
     const customMove = animUsable(this.anims[moving ? 'walk' : 'idle']);
-    if (this.state === 'alive' && !atkCtl && !this.atk && customMove) { g.position.y = this.jy; g.scale.set(1, 1, 1); g.rotation.z = 0; }
+    if (this.state === 'alive' && !atkCtl && !this.atk && customMove) { g.position.y = this.baseY + this.jy; g.scale.set(1, 1, 1); g.rotation.z = 0; }
     else if (this.state === 'alive' && !atkCtl && !this.atk) {
       this.phase += dt * (moving ? 8 : 3);
       if (this.kind.hop) {
         const h = Math.abs(Math.sin(this.phase));
-        g.position.y = (moving ? h * 0.14 : 0) + this.jy;
+        g.position.y = this.baseY + (moving ? h * 0.14 : 0) + this.jy;
         const sq = moving ? 1 + (h - 0.5) * 0.12 : 1 + Math.sin(this.phase) * 0.03;
         g.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
       } else {
-        g.position.y = this.jy; g.rotation.z = this.kind.glide ? 0 : Math.sin(this.phase) * (moving ? 0.1 : 0.03);
+        g.position.y = this.baseY + this.jy; g.rotation.z = this.kind.glide ? 0 : Math.sin(this.phase) * (moving ? 0.1 : 0.03);
       }
     }
     const rg = this.kind.regen;
@@ -1225,7 +1236,7 @@ function sheetToKind(sheet, dec) {
   };
 }
 const fetchJSON = async url => { const r = await fetch(url + '?v=' + Date.now()); if (!r.ok) throw new Error(url + ' : ' + r.status); return r.json(); };
-const monsters = [];
+let monsters = [];
 try {
   const list = (await fetchJSON('creatures/index.json')).creatures.filter(c => c.spawnTest !== false);
   const loaded = [];
@@ -1464,10 +1475,246 @@ function updateLocomotion(dt) {
   if (len < 0.15) return;
   if (len > 1) { mx /= len; mz /= len; }
   camera.getWorldDirection(_fw); _fw.y = 0; _fw.normalize(); _rt.set(-_fw.z, 0, _fw.x);
-  rig.position.addScaledVector(_fw, -mz * MOVE_SPEED * dt).addScaledVector(_rt, mx * MOVE_SPEED * dt);
+  const dx = (_fw.x * -mz + _rt.x * mx) * MOVE_SPEED * dt, dz = (_fw.z * -mz + _rt.z * mx) * MOVE_SPEED * dt;
+  if (DUN.active) { // murs du donjon : on glisse le long
+    const y = rig.position.y, hx = playerPos.x, hz = playerPos.z;
+    if (!bodyBlocked(hx + dx, hz + dz, y)) { rig.position.x += dx; rig.position.z += dz; }
+    else if (!bodyBlocked(hx + dx, hz, y)) rig.position.x += dx;
+    else if (!bodyBlocked(hx, hz + dz, y)) rig.position.z += dz;
+    return;
+  }
+  rig.position.x += dx; rig.position.z += dz;
   const r = Math.hypot(rig.position.x, rig.position.z);
   if (r > 28) { rig.position.x *= 28 / r; rig.position.z *= 28 / r; }
 }
+
+/* ================= Donjons ================= */
+// Le joueur choisit un donjon sur le panneau du village ; les salles (blocs de 24 cm) sont assemblées selon le fichier du donjon.
+const DUN = { active: false, data: null, group: null, solid: null, min: [0, 0, 0], dims: [1, 1, 1], lights: [], pool: [], monsters: [], portal: null, ambient: 0.25, t: 0, fall: 0, lightTimer: 0 };
+let floorY = 0, transFade = 0;
+const roomFiles = new Map(), creatureFiles = new Map();
+const roomMats = LIGHTS.map(L => makeVoxelMaterial(THREE, L.id, ATLAS, { repeat: 6 }));
+const loadRoomFile = path => { if (!roomFiles.has(path)) roomFiles.set(path, fetchJSON('rooms/' + path).then(decodeRoom)); return roomFiles.get(path); };
+// cube plein du donjon (coordonnées monde en mètres)
+function solidAt(x, y, z) {
+  if (!DUN.active) return false;
+  const gx = Math.floor(x / BLOCK) - DUN.min[0], gy = Math.floor(y / BLOCK) - DUN.min[1], gz = Math.floor(z / BLOCK) - DUN.min[2], [dx, dy, dz] = DUN.dims;
+  if (gx < 0 || gy < 0 || gz < 0 || gx >= dx || gy >= dy || gz >= dz) return false;
+  return DUN.solid[gx + dx * (gy + dy * gz)] === 1;
+}
+// hauteur du sol sous un point (le plus haut bloc plein sous « fromY » + une marche)
+function groundAt(x, z, fromY) {
+  for (let y = Math.floor((fromY + 0.55) / BLOCK); y >= DUN.min[1] - 1; y--) if (solidAt(x, (y + 0.5) * BLOCK, z)) return (y + 1) * BLOCK;
+  return -Infinity;
+}
+// un corps de joueur ou de créature tient-il debout à (x, z) avec les pieds en y ? (rayon r, hauteur h, marche franchissable 0,5 m)
+function bodyBlocked(x, z, y, r = 0.22, h = 1.6) {
+  for (const [ox, oz] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]]) for (let yy = y + 0.55; yy < y + h; yy += BLOCK) if (solidAt(x + ox, yy, z + oz)) return true;
+  return false;
+}
+function buildDungeon(d, rooms) {
+  const group = new THREE.Group(), pieces = d.pieces.filter(p => rooms.get(p.room));
+  // limites du donjon (en blocs)
+  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  for (const pc of pieces) { const r = rooms.get(pc.room), dm = rotDims(r.size, pc.rot); for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], pc.pos[k]); mx[k] = Math.max(mx[k], pc.pos[k] + dm[k]); } }
+  mn[1] -= 1; DUN.min = mn; DUN.dims = mx.map((v, k) => Math.max(1, v - mn[k] + 1));
+  const [dx, dy, dz] = DUN.dims; DUN.solid = new Uint8Array(dx * dy * dz);
+  const m4 = new THREE.Matrix4(), c = new THREE.Color();
+  DUN.lights = []; const spawns = [];
+  for (const pc of pieces) {
+    const r = rooms.get(pc.room), [nx, ny, nz] = r.size, occ = new Uint8Array(nx * ny * nz), I = (x, y, z) => x + nx * (y + ny * z);
+    r.voxels.forEach(v => { occ[I(v.x, v.y, v.z)] = 1; });
+    const solidL = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz && occ[I(x, y, z)];
+    const per = LIGHTS.map(() => []);
+    for (const v of r.voxels) {
+      const [gx, gz] = rotXZ(v.x + 0.5, v.z + 0.5, r.size, pc.rot), X = Math.floor(gx) + pc.pos[0] - mn[0], Y = v.y + pc.pos[1] - mn[1], Z = Math.floor(gz) + pc.pos[2] - mn[2];
+      if (X >= 0 && Y >= 0 && Z >= 0 && X < dx && Y < dy && Z < dz) DUN.solid[X + dx * (Y + dy * Z)] = 1;
+      if (!(solidL(v.x + 1, v.y, v.z) && solidL(v.x - 1, v.y, v.z) && solidL(v.x, v.y + 1, v.z) && solidL(v.x, v.y - 1, v.z) && solidL(v.x, v.y, v.z + 1) && solidL(v.x, v.y, v.z - 1))) per[v.light].push(v);
+    }
+    const pg = new THREE.Group(), t = pieceTransform(r, pc);
+    pg.position.set(t.offset[0] * BLOCK, t.offset[1] * BLOCK, t.offset[2] * BLOCK); pg.rotation.y = t.rotY; pg.scale.setScalar(BLOCK);
+    per.forEach((list, L) => {
+      if (!list.length) return;
+      const geo = boxGeo.clone(); geo.setAttribute('aTex', new THREE.InstancedBufferAttribute(new Float32Array(list.length), 1));
+      const mesh = new THREE.InstancedMesh(geo, roomMats[L], list.length);
+      list.forEach((v, k) => { m4.makeTranslation(v.x + 0.5, v.y + 0.5, v.z + 0.5); mesh.setMatrixAt(k, m4); mesh.setColorAt(k, c.setHex(v.color)); geo.attributes.aTex.array[k] = v.tex; });
+      mesh.frustumCulled = false; pg.add(mesh);
+    });
+    group.add(pg);
+    const W = p => { const q = piecePoint(r, pc, p); return new V3(q[0] * BLOCK, q[1] * BLOCK, q[2] * BLOCK); };
+    (r.markers.lights || []).forEach(l => DUN.lights.push({ pos: W(l.pos), color: new THREE.Color(l.color), intensity: l.intensity, range: l.range, flicker: l.flicker, seed: Math.random() * 10 }));
+    (r.markers.spawns || []).forEach(sp => spawns.push({ ...sp, world: W(sp.pos), ambient: r.sheet.ambient }));
+    if (pc.uid === d.start && r.markers.start) DUN.start = { pos: W(r.markers.start.pos), dir: rotDir(r.markers.start.dir, pc.rot), ambient: r.sheet.ambient };
+  }
+  if (!DUN.start) { // pas de départ : centre de la première salle
+    const pc = pieces[0], r = rooms.get(pc.room), dm = rotDims(r.size, pc.rot);
+    DUN.start = { pos: new V3((pc.pos[0] + dm[0] / 2) * BLOCK, (pc.pos[1] + 1) * BLOCK, (pc.pos[2] + dm[2] / 2) * BLOCK), dir: 'N', ambient: r.sheet.ambient };
+  }
+  return { group, spawns };
+}
+// créatures d'un point d'apparition : une créature précise, ou une catégorie (filtrée par niveau si possible)
+let creatureIndex = null;
+async function pickKinds(sp) {
+  if (!creatureIndex) creatureIndex = await fetchJSON('creatures/index.json').catch(() => ({ creatures: [] }));
+  let list = creatureIndex.creatures || [];
+  if (sp.creature) list = list.filter(c => c.id === sp.creature);
+  else if (sp.category) list = list.filter(c => c.path.startsWith(sp.category + '/'));
+  const inLv = list.filter(c => c.level == null || (c.level >= (sp.levelMin || 1) && c.level <= (sp.levelMax || 99)));
+  if (inLv.length) list = inLv;
+  if (!list.length) return [];
+  const out = [];
+  for (let k = 0; k < Math.max(1, sp.count || 1); k++) {
+    const e = list[Math.floor(Math.random() * list.length)];
+    if (!creatureFiles.has(e.path)) creatureFiles.set(e.path, fetchJSON('creatures/' + e.path).then(f => ({ sheet: f.sheet, dec: decodeCreature(f) })));
+    try { const f = await creatureFiles.get(e.path); out.push(sheetToKind(f.sheet, f.dec)); } catch (err) { console.warn(err); }
+  }
+  return out;
+}
+const villageObjs = () => [ground, clearing, decorMesh, sign, dunBoard.group];
+async function enterDungeon(entry) {
+  if (DUN.active || DUN.loading) return; DUN.loading = true; transFade = 1; playLevelUp();
+  try {
+    const d = await fetchJSON('dungeons/' + entry.path), rooms = new Map();
+    await Promise.all(d.pieces.map(p => loadRoomFile(p.room).then(r => rooms.set(p.room, r)).catch(e => console.warn('Salle manquante', p.room, e))));
+    if (!rooms.size) throw new Error('aucune salle chargée');
+    DUN.start = null; const built = buildDungeon(d, rooms);
+    DUN.group = built.group; scene.add(DUN.group); DUN.data = d; DUN.active = true; DUN.t = 0; DUN.fall = 0;
+    // le village disparaît, l'ambiance devient celle du donjon
+    villageObjs().forEach(o => o && (o.visible = false));
+    savedMonsters = monsters; savedMonsters.forEach(m => { m.group.visible = false; m.plate.mesh.visible = false; m.atk = null; });
+    for (const sp of spores) sp.remove(); spores.length = 0;
+    DUN.ambient = DUN.start.ambient ?? 0.25; setDungeonAmbience(true);
+    // lumières : une réserve fixe de 6 lumières, données aux torches les plus proches
+    DUN.pool = []; for (let k = 0; k < 6; k++) { const pl = new THREE.PointLight(0xffffff, 0, 6, 1.6); scene.add(pl); DUN.pool.push(pl); }
+    DUN.lightTimer = 0;
+    // créatures
+    DUN.monsters = [];
+    for (const sp of built.spawns) {
+      const kinds = await pickKinds(sp);
+      kinds.forEach((k, i) => {
+        const m = new Monster(k, (Math.random() - 0.5) * 1.6), a = Math.random() * Math.PI * 2, rr = Math.random() * (sp.radius || 0) * BLOCK;
+        m.spawnAt = sp.world.clone().add(new V3(Math.cos(a) * rr, 0, Math.sin(a) * rr)); m.baseY = sp.world.y; m.home3 = m.spawnAt.clone(); m.noRespawn = true; m.timer = 0.4 + i * 0.3;
+        DUN.monsters.push(m);
+      });
+    }
+    monsters = DUN.monsters;
+    // départ et portail de retour
+    const yaw = { N: 0, W: Math.PI / 2, S: Math.PI, E: -Math.PI / 2 }[DUN.start.dir] || 0;
+    teleportRig(DUN.start.pos, yaw);
+    const back = new V3(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(1.1); // derrière le joueur
+    DUN.portal = makePortal(); DUN.portal.position.copy(DUN.start.pos).add(back); DUN.portal.rotation.y = yaw; scene.add(DUN.portal);
+    toast(d.name, '#ffd23a');
+  } catch (e) { console.error(e); toast('Donjon introuvable', '#ff6b4a'); exitDungeon(true); }
+  DUN.loading = false;
+}
+function exitDungeon(silent = false) {
+  if (DUN.group) { scene.remove(DUN.group); DUN.group = null; }
+  for (const m of DUN.monsters) { scene.remove(m.group); scene.remove(m.plate.mesh); for (const P of m.parts) if (P.severed) scene.remove(P.group); }
+  DUN.monsters = []; for (const pl of DUN.pool) scene.remove(pl); DUN.pool = [];
+  if (DUN.portal) { scene.remove(DUN.portal); DUN.portal = null; }
+  for (const sp of spores) sp.remove(); spores.length = 0;
+  const was = DUN.active; DUN.active = false; floorY = 0;
+  villageObjs().forEach(o => o && (o.visible = true)); setDungeonAmbience(false);
+  if (savedMonsters) { monsters = savedMonsters; savedMonsters = null; monsters.forEach(m => { m.state = 'dead'; m.timer = 0.5 + Math.random(); m.group.visible = false; }); }
+  if (was && !silent) { transFade = 1; teleportRig(new V3(RESPAWN[0], 0, RESPAWN[1]), 0); toast('Retour au village', '#9be15d'); }
+}
+let savedMonsters = null;
+function setDungeonAmbience(on) {
+  hemi.intensity = on ? 0.06 + DUN.ambient * 0.9 : 1.4; sun.intensity = on ? DUN.ambient * 0.6 : 2.2;
+  scene.background.set(on ? 0x050608 : 0x8ec5ff); scene.fog.color.set(on ? 0x050608 : 0x8ec5ff); scene.fog.near = on ? 6 : 18; scene.fog.far = on ? 28 : 55;
+  scene.environmentIntensity = on ? 0.12 + DUN.ambient * 0.4 : 0.6;
+}
+function teleportRig(pos, yaw) {
+  rig.rotation.y = yaw; rig.updateMatrixWorld(true); camera.getWorldPosition(_h0);
+  rig.position.x += pos.x - _h0.x; rig.position.z += pos.z - _h0.z; rig.position.y = pos.y; swordState.hasPrev = false; floorY = pos.y;
+}
+function makePortal() {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.07, 10, 40), new THREE.MeshBasicMaterial({ color: 0x7fd8ff })); ring.position.y = 1.1; g.add(ring);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(0.7, 40), new THREE.MeshBasicMaterial({ color: 0x3aa0ff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false })); disc.position.y = 1.1; g.add(disc);
+  const glow = new THREE.PointLight(0x7fd8ff, 2, 4, 1.5); glow.position.y = 1.1; g.add(glow);
+  return g;
+}
+function updateDungeon(dt) {
+  if (!DUN.active) return;
+  DUN.t += dt;
+  // lumières les plus proches du joueur
+  DUN.lightTimer -= dt;
+  if (DUN.lightTimer <= 0) {
+    DUN.lightTimer = 0.4;
+    const near = DUN.lights.map(l => [l, l.pos.distanceToSquared(playerPos)]).sort((a, b) => a[1] - b[1]).slice(0, DUN.pool.length);
+    DUN.pool.forEach((pl, k) => { const l = near[k] && near[k][0]; pl.userData.l = l; if (l) { pl.position.copy(l.pos); pl.color.copy(l.color); pl.distance = l.range; } else pl.intensity = 0; });
+  }
+  for (const pl of DUN.pool) { const l = pl.userData.l; if (!l) continue; const f = l.flicker ? 0.82 + 0.12 * Math.sin(time * 11 + l.seed) + 0.06 * Math.sin(time * 37 + l.seed * 3) : 1; pl.intensity = l.intensity * 6 * f; }
+  // sol, escaliers, chute
+  const g = groundAt(playerPos.x, playerPos.z, rig.position.y);
+  if (g > rig.position.y - 0.02 && g <= rig.position.y + 0.55) { rig.position.y = g; DUN.fall = 0; }
+  else if (g < rig.position.y) { DUN.fall += 9.8 * dt; rig.position.y = Math.max(g, rig.position.y - DUN.fall * dt); if (rig.position.y < (DUN.min[1] - 20) * BLOCK) teleportRig(DUN.start.pos, rig.rotation.y); }
+  floorY = rig.position.y;
+  // portail de retour
+  if (DUN.portal) {
+    DUN.portal.children[0].rotation.z += dt * 1.5;
+    const p = DUN.portal.position;
+    if (DUN.t > 3 && Math.hypot(playerPos.x - p.x, playerPos.z - p.z) < 0.6 && Math.abs(rig.position.y - p.y) < 1) exitDungeon();
+  }
+}
+
+/* ===== Panneau des donjons au village ===== */
+const dunBoard = (() => {
+  const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 768;
+  const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace;
+  const group = new THREE.Group(), board = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.9), new THREE.MeshBasicMaterial({ map: tex }));
+  board.position.y = 1.35; group.add(board);
+  const post = new THREE.Mesh(boxGeo, new THREE.MeshLambertMaterial({ color: 0x5b3a1e })); post.scale.set(0.1, 0.9, 0.1); post.position.set(0, 0.45, -0.03); group.add(post);
+  group.position.set(1.9, 0, 3.0); group.lookAt(0, 0, 1.2); scene.add(group);
+  const st = { list: [], hover: -1, charge: 0, msg: 'Chargement…' };
+  const BTN = k => ({ x: 60, y: 170 + k * 110, w: 904, h: 92 });
+  function draw() {
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#3a2a1c'; g.fillRect(0, 0, 1024, 768); g.fillStyle = '#5b4128'; g.fillRect(16, 16, 992, 736);
+    g.fillStyle = '#ffe9b8'; g.textAlign = 'center'; g.font = 'bold 72px system-ui, sans-serif'; g.fillText('DONJONS', 512, 100);
+    g.font = '30px system-ui, sans-serif'; g.fillStyle = 'rgba(255,233,184,.75)'; g.fillText('Touche un donjon avec ton épée (ou ta main) pour y entrer', 512, 145);
+    if (!st.list.length) { g.font = '36px system-ui, sans-serif'; g.fillStyle = '#ffe9b8'; g.fillText(st.msg, 512, 380); }
+    st.list.slice(0, 5).forEach((e, k) => {
+      const b = BTN(k), hov = k === st.hover;
+      g.fillStyle = hov ? '#8a6234' : '#6e4d2c'; g.fillRect(b.x, b.y, b.w, b.h);
+      if (hov && st.charge > 0) { g.fillStyle = '#c9963f'; g.fillRect(b.x, b.y, b.w * Math.min(1, st.charge), b.h); }
+      g.strokeStyle = '#ffd23a'; g.lineWidth = hov ? 5 : 2; g.strokeRect(b.x, b.y, b.w, b.h);
+      g.textAlign = 'left'; g.fillStyle = '#fff6e0'; g.font = 'bold 44px system-ui, sans-serif'; g.fillText(e.name, b.x + 28, b.y + 58);
+      g.textAlign = 'right'; g.font = '32px system-ui, sans-serif'; g.fillStyle = '#ffe9b8'; g.fillText('niv. ' + (e.level ?? '?') + ' · ' + (e.pieces ?? '?') + ' salles', b.x + b.w - 24, b.y + 58);
+    });
+    tex.needsUpdate = true;
+  }
+  draw();
+  fetchJSON('dungeons/index.json').then(i => { st.list = i.dungeons || []; if (!st.list.length) st.msg = 'Aucun donjon pour l\'instant'; draw(); })
+    .catch(() => { st.msg = 'Aucun donjon : crée-en un dans l\'éditeur de maps'; draw(); });
+  const _lp = new V3();
+  // quel bouton est sous ce point du monde ? (-1 = aucun) ; « near » = distance max au panneau
+  function buttonAt(world, near = 0.07) {
+    board.worldToLocal(_lp.copy(world));
+    if (Math.abs(_lp.z) > near || Math.abs(_lp.x) > 0.6 || Math.abs(_lp.y) > 0.45) return -1;
+    const cx = (_lp.x / 1.2 + 0.5) * 1024, cy = (0.5 - _lp.y / 0.9) * 768;
+    for (let k = 0; k < Math.min(5, st.list.length); k++) { const b = BTN(k); if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) return k; }
+    return -1;
+  }
+  function update(dt) {
+    if (!group.visible || DUN.active || DUN.loading) return;
+    let k = -1;
+    if (swordState.holder) k = buttonAt(swordB);
+    if (k < 0) for (const gr of grips) if (gr.userData.source && gr.userData.fist && gr.userData.fist.visible) { gr.getWorldPosition(_v); k = buttonAt(_v); if (k >= 0) break; }
+    if (k !== st.hover) { st.hover = k; st.charge = 0; draw(); }
+    if (k >= 0) { st.charge += dt / 0.6; draw(); if (st.charge >= 1) { st.charge = 0; st.hover = -1; draw(); enterDungeon(st.list[k]); } }
+  }
+  // à la souris : clic sur le panneau
+  const ray2 = new THREE.Raycaster();
+  addEventListener('pointerdown', e => {
+    if (mode !== 'desktop' || !group.visible || DUN.active) return;
+    ray2.setFromCamera(new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
+    const h = ray2.intersectObject(board, false)[0]; if (!h) return;
+    const k = buttonAt(h.point, 0.2); if (k >= 0) enterDungeon(st.list[k]);
+  });
+  return { group, update };
+})();
 
 /* ================= Interface ================= */
 const $ = id => document.getElementById(id);
@@ -1513,13 +1760,15 @@ renderer.setAnimationLoop(() => {
   camera.getWorldPosition(playerPos);
   updateSword(dt);
   for (const m of monsters) m.update(dt);
+  dunBoard.update(dt);
+  updateDungeon(dt);
   updateSpores(dt);
   updatePlayer(dt);
   updateParticles(dt);
   updateNumbers(dt);
   renderer.render(scene, camera);
 });
-window.__game = { player, spores, damagePlayer, gainXp, bumpSwing: () => ++swingId, camera, paintPlate, CAT_COLORS, rig, monsters, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
+window.__game = { DUN, enterDungeon, exitDungeon, solidAt, get monsters() { return monsters; }, player, spores, damagePlayer, gainXp, bumpSwing: () => ++swingId, camera, paintPlate, CAT_COLORS, rig, swordState, mouse, get kills() { return kills; }, get mode() { return mode; } };
 </script>
 </body>
 </html>

@@ -105,7 +105,7 @@
 <div id="app">
   <header>
     <span class="title">VOXEL BLADE</span>
-    <span class="tabs"><button class="on">Salle</button><button disabled title="Prochaine étape : assembler les salles en donjon">Donjon (bientôt)</button></span>
+    <span class="tabs"><button id="tabRoom" class="on">Salle</button><button id="tabDungeon">Donjon</button></span>
     <input id="cName" type="text" value="Nouvelle salle" title="Nom de la salle">
     <span class="sep"></span>
     <button id="bNew">Nouveau</button>
@@ -145,6 +145,12 @@
     <div class="presets" id="presets"></div>
     <div class="row"><button id="bAddPreset" style="flex:1">+ Créer depuis le pinceau</button></div>
   </div>
+  <div id="leftDungeon" hidden>
+    <h3>Salles disponibles</h3>
+    <div class="row"><button id="dgReload" style="flex:1">Actualiser la liste</button></div>
+    <div id="dgLib" class="tree" style="min-width:0;max-height:none"></div>
+    <p class="small">« + » ajoute la salle au donjon. Pour raccorder : clique une ouverture de la salle à déplacer, puis l'ouverture où l'accrocher.</p>
+  </div>
   </aside>
 
   <div id="main">
@@ -161,9 +167,27 @@
       </div>
       <div id="sliceWrap"><canvas id="slice"></canvas><div class="hint" id="hintSlice">[ et ] : changer de couche · la couche en dessous apparaît en transparence</div></div>
     </div>
+    <div id="dgPane" hidden style="position:relative;min-width:0;min-height:0">
+      <canvas id="dgPlan" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+      <div class="hint" id="dgHint">Plan vu de dessus · glisser une salle pour la déplacer · R : tourner · Suppr : retirer · flèches : déplacer · Pg↑/Pg↓ : monter/descendre · molette : zoom · glisser le fond : déplacer la vue</div>
+    </div>
   </div>
 
   <aside id="right">
+  <div id="rightDungeon" hidden>
+    <h3>Donjon</h3>
+    <div class="row"><label>Catégorie</label><select id="dgFolder"></select></div>
+    <div class="row" style="gap:4px"><button id="dgAddCat">+ Catégorie</button><button id="dgAddSub">+ Sous-cat.</button></div>
+    <div class="row"><label>Niveau conseillé</label><input id="dgLevel" type="number" min="1" step="1" style="width:64px"></div>
+    <div class="row"><label>Salle de départ</label><select id="dgStart" style="flex:1"></select></div>
+    <textarea id="dgDesc" placeholder="Description du donjon" style="width:100%;min-height:44px;background:#0f1218;border:1px solid var(--line);border-radius:6px;color:var(--txt);padding:6px;font:inherit"></textarea>
+    <h3>Salle sélectionnée</h3>
+    <div id="dgSel" class="small">Aucune : clique une salle sur le plan.</div>
+    <h3>Vérifications</h3>
+    <div id="dgCheck" class="stats"></div>
+    <div class="row"><button id="dgFrame" style="flex:1">Recadrer la vue</button></div>
+  </div>
+  <div id="rightRoom">
     <h3>Affichage</h3>
     <div class="toggles">
       <button id="vColor" class="on">Couleur</button>
@@ -190,8 +214,9 @@
     <div id="markerList"></div>
     <p class="small" style="margin:2px 0 0">« Placer » puis clic sur un bloc (en 3D ou dans la tranche) : le repère se pose sur sa face. Les ouvertures sont les points de raccord entre salles, hauteur comprise.</p>
 
-    <h3>Statistiques</h3>    <h3>Statistiques</h3>
+    <h3>Statistiques</h3>
     <div class="stats" id="stats"></div>
+  </div>
   </aside>
 </div>
 
@@ -243,7 +268,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial, BLOCK, ROOM_TYPES, DIRS, OPENING_KINDS, defaultRoomSheet } from '../shared/look.js';
+import { MATS, TEXTURES, LIGHTS, TILE, makeAtlasCanvas, makeAtlas, makeVoxelMaterial, BLOCK, ROOM_TYPES, DIRS, OPENING_KINDS, defaultRoomSheet, decodeRoom, rotDims, rotXZ, rotDir, oppositeDir, pieceOpenings, pieceTransform } from '../shared/look.js';
 
 /* ============ Catalogues (types de cubes, textures, lumières : voir shared/look.js) ============ */
 const PART_TINTS = ['#ff6b6b', '#4dabf7', '#ffd43b', '#69db7c', '#da77f2', '#ffa94d', '#3bc9db', '#f783ac'];
@@ -512,7 +537,7 @@ function pick3D(e) {
 }
 let drag3D = false, last3D = -1;
 renderer.domElement.addEventListener('pointerdown', e => {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || mapMode === 'dungeon') return;
   const p = pick3D(e); if (!p) return;
   if (tool === 'place') { placeMarkerAt(...p.add); return; }
   if (tool === 'picker') { if (p.hit) pickAt(p.i); return; }
@@ -521,6 +546,7 @@ renderer.domElement.addEventListener('pointerdown', e => {
   renderer.domElement.setPointerCapture(e.pointerId);
 });
 renderer.domElement.addEventListener('pointermove', e => {
+  if (mapMode === 'dungeon') return;
   const p = pick3D(e);
   if (p) { const c = (tool === 'pencil' ? p.add : p.hit) || p.add; hover.position.set(c[0] + 0.5 - P.nx / 2, c[1] + 0.5, c[2] + 0.5 - P.nz / 2); hover.visible = inB(...c); } else hover.visible = false;
   if (drag3D && p && tool !== 'pencil') act3D(p);
@@ -732,6 +758,7 @@ function markDirty(fast = false, viewOnly = false) { dirty3D = true; dirtySlice 
 let statsTimer = 0;
 function loop(t) {
   requestAnimationFrame(loop);
+  if (mapMode === 'dungeon') { dgFrameTick(); controls.update(); renderer.render(scene, camera); return; }
   if (dirty3D) { rebuild3D(); dirty3D = false; }
   if (dirtySlice) { drawSlice(); dirtySlice = false; }
   if (dirtyStats && t - statsTimer > 400) { statsTimer = t; renderStats(); dirtyStats = false; }
@@ -739,7 +766,7 @@ function loop(t) {
   controls.update(); renderer.render(scene, camera);
 }
 function resize() {
-  const w = v3.clientWidth, h = v3.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); dirtySlice = true;
+  const w = v3.clientWidth, h = v3.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); dirtySlice = true; if (typeof DG !== 'undefined') DG.planDirty = true;
 }
 addEventListener('resize', resize);
 
@@ -782,21 +809,22 @@ function saveFile() {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000); autosave(); toast('Fichier enregistré : ' + slug(P.name) + '.json');
 }
 function autosave() { P.name = $('cName').value.trim() || 'Créature'; if (lsSet(LS.auto, JSON.stringify(serialize()))) { unsaved = false; $('saveState').textContent = 'sauvegardé dans ce navigateur'; } }
-setInterval(() => { if (unsaved) autosave(); }, 5000);
-$('bSave').onclick = saveFile;
+setInterval(() => { if (unsaved && mapMode !== 'dungeon') autosave(); }, 5000);
+$('bSave').onclick = () => mapMode === 'dungeon' ? dgSaveFile() : saveFile();
 $('bOpen').onclick = () => $('fileIn').click();
 $('fileIn').onchange = async e => {
+  if (mapMode === 'dungeon') { const f = e.target.files[0]; e.target.value = ''; if (f) dgOpenFile(f); return; }
   const f = e.target.files[0]; if (!f) return;
   try { deserialize(JSON.parse(await f.text())); afterLoad(); toast('« ' + P.name + ' » ouverte'); } catch (err) { toast('Impossible d\'ouvrir : ' + err.message); }
   e.target.value = '';
 };
-$('cName').onchange = () => { P.name = $('cName').value; markDirty(); };
+$('cName').onchange = () => { if (mapMode === 'dungeon') { DG.d.name = $('cName').value.trim() || 'Donjon'; dgTouched(); return; } P.name = $('cName').value; markDirty(); };
 function afterLoad() {
   activePart = 0; $('cName').value = P.name; slice.layer = Math.min(slice.layer, sliceMax());
   rebuildHelpers(); rebuildPivots(); syncSliceUI(); renderParts(); renderPresets(); frameCamera(); markDirty(); dirtyStats = true; renderRoomSheet(); renderMarkers(); rebuildMarkers();
 }
 // nouveau
-$('bNew').onclick = () => $('dlgNew').showModal();
+$('bNew').onclick = () => mapMode === 'dungeon' ? dgNew() : $('dlgNew').showModal();
 $('nCancel').onclick = () => $('dlgNew').close();
 $('nOk').onclick = () => {
   const cl = v => Math.max(4, Math.min(128, Math.round(+v || 32)));
@@ -842,6 +870,7 @@ async function loadCatalog() {
 }
 const creaturePath = () => (P.folder ? P.folder + '/' : '') + slug(P.name) + '.json';
 $('bSend').onclick = () => {
+  if (mapMode === 'dungeon') { dgSendDialog(); return; }
   const c = gitCfg(); $('gOwner').value = c.owner || 'Ilkoko-33233'; $('gRepo').value = c.repo || 'voxel-blade'; $('gBranch').value = c.branch || 'main'; $('gToken').value = c.token || '';
   P.name = $('cName').value.trim() || 'Créature';
   $('gPath').textContent = 'Fichier : rooms/' + creaturePath() + ' · catégorie : ' + catLabel(P.folder);
@@ -849,6 +878,7 @@ $('bSend').onclick = () => {
 };
 $('gCancel').onclick = () => $('dlgGit').close();
 $('gOk').onclick = async () => {
+  if (mapMode === 'dungeon') { dgSend(); return; }
   const c = { owner: $('gOwner').value.trim(), repo: $('gRepo').value.trim(), branch: $('gBranch').value.trim() || 'main', token: $('gToken').value.trim() };
   if (!c.owner || !c.repo || !c.token) { toast('Renseigne le dépôt et le jeton'); return; }
   lsSet(LS.git, JSON.stringify(c));
@@ -888,6 +918,8 @@ async function errText(r) {
 }
 // ouvrir depuis le dépôt
 $('bOpenGit').onclick = async () => {
+  if (mapMode === 'dungeon') { dgOpenGit(); return; }
+  $('dlgOpen').querySelector('h2').textContent = 'Ouvrir une salle du dépôt';
   $('dlgOpen').showModal(); $('openTree').textContent = 'Chargement…';
   await loadCatalog();
   const t = $('openTree'); t.innerHTML = '';
@@ -1086,12 +1118,348 @@ function flickerLights(t) {
   if (!view.dark) return;
   for (const pl of pointLights) { const u = pl.userData; pl.intensity = u.flicker ? u.base * (0.82 + 0.12 * Math.sin(t * 0.011 + u.seed) + 0.06 * Math.sin(t * 0.037 + u.seed * 3)) : u.base; }
 }
+/* ============ Donjon : assemblage des salles ============ */
+let mapMode = 'room';
+const LSD = 'voxelblade.maps.dungeon';
+function emptyDungeon() { return { format: 'voxelblade-dungeon', version: 1, id: null, name: 'Nouveau donjon', folder: 'donjons', description: '', level: 1, pieces: [], start: null }; }
+const DG = {
+  d: null, rooms: new Map(), ready: new Map(), lib: { categories: {}, rooms: [] },
+  catalog: { format: 'voxelblade-dungeons-index', version: 1, categories: { donjons: 'Donjons' }, dungeons: [] },
+  sel: null, pick: null, group: new THREE.Group(), planDirty: true, dirty3D: true, view: { cx: 0, cz: 0, ppb: 8 }, drag: null,
+};
+scene.add(DG.group); DG.group.visible = false;
+DG.d = (() => { try { const d = JSON.parse(lsGet(LSD) || 'null'); if (d && d.format === 'voxelblade-dungeon') return d; } catch (e) { } return emptyDungeon(); })();
+let dgUid = 1 + Math.max(0, ...DG.d.pieces.map(p => p.uid || 0));
+let dgUnsaved = false;
+function dgTouched() { dgUnsaved = true; $('saveState').textContent = 'modifications non enregistrées'; DG.planDirty = true; DG.dirty3D = true; dgRenderPanels(); }
+setInterval(() => { if (dgUnsaved && lsSet(LSD, JSON.stringify(DG.d))) { dgUnsaved = false; if (mapMode === 'dungeon') $('saveState').textContent = 'sauvegardé dans ce navigateur'; } }, 5000);
+const TYPE_COLORS = { entrance: '#4dabf7', corridor: '#868e96', crossroad: '#a9e34b', combat: '#ff8787', deadend: '#adb5bd', treasure: '#ffd43b', boss: '#cc5de8', stairs: '#3bc9db', other: '#ced4da' };
+
+// ----- bibliothèque de salles -----
+async function dgLoadLib() {
+  try { const g = await ghGet('rooms/index.json'); if (g && g.json) DG.lib = { categories: g.json.categories || {}, rooms: g.json.rooms || [] }; } catch (e) { }
+  dgRenderLib();
+}
+function dgRoom(path) { // promesse de salle décodée (avec son modèle 3D)
+  if (!DG.rooms.has(path)) DG.rooms.set(path, (async () => {
+    const g = await ghGet('rooms/' + path); if (!g) throw new Error('salle introuvable : ' + path);
+    const r = decodeRoom(g.json); r.path = path; r.template = buildRoomTemplate(r); DG.ready.set(path, r); return r;
+  })());
+  return DG.rooms.get(path);
+}
+async function dgEnsureRooms() { await Promise.all(DG.d.pieces.map(p => dgRoom(p.room).catch(e => { toast(e.message); }))); DG.planDirty = true; DG.dirty3D = true; dgRenderPanels(); }
+function buildRoomTemplate(r) {
+  const [nx, ny, nz] = r.size, occ = new Uint8Array(nx * ny * nz), I = (x, y, z) => x + nx * (y + ny * z);
+  r.voxels.forEach(v => { occ[I(v.x, v.y, v.z)] = 1; });
+  const solid = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz && occ[I(x, y, z)];
+  const per = LIGHTS.map(() => []);
+  r.voxels.forEach(v => { if (solid(v.x + 1, v.y, v.z) && solid(v.x - 1, v.y, v.z) && solid(v.x, v.y + 1, v.z) && solid(v.x, v.y - 1, v.z) && solid(v.x, v.y, v.z + 1) && solid(v.x, v.y, v.z - 1)) return; per[v.light].push(v); });
+  const g = new THREE.Group(), m4 = new THREE.Matrix4(), c = new THREE.Color();
+  per.forEach((list, L) => {
+    if (!list.length) return;
+    const geo = boxGeo.clone(); geo.setAttribute('aTex', new THREE.InstancedBufferAttribute(new Float32Array(list.length), 1));
+    const mesh = new THREE.InstancedMesh(geo, buckets[L].mat, list.length);
+    list.forEach((v, k) => { m4.makeTranslation(v.x + 0.5, v.y + 0.5, v.z + 0.5); mesh.setMatrixAt(k, m4); mesh.setColorAt(k, c.setHex(v.color)); geo.attributes.aTex.array[k] = v.tex; });
+    mesh.frustumCulled = false; g.add(mesh);
+  });
+  return g;
+}
+function dgRenderLib() {
+  const el = $('dgLib'); el.innerHTML = '';
+  if (!DG.lib.rooms.length) { el.innerHTML = '<p class="small">Aucune salle dans le dépôt : construis et envoie des salles depuis l\'onglet Salle.</p>'; return; }
+  const by = {}; DG.lib.rooms.forEach(e => { const f = e.path.split('/').slice(0, -1).join('/'); (by[f] = by[f] || []).push(e); });
+  const lab = path => path.split('/').map((_, k, a) => DG.lib.categories[a.slice(0, k + 1).join('/')] || a[k]).join(' › ');
+  Object.keys(by).sort().forEach(f => {
+    const h = document.createElement('div'); h.className = 'cat'; h.textContent = lab(f); el.append(h);
+    by[f].forEach(e => {
+      const d = document.createElement('div'); d.className = 'cr';
+      d.innerHTML = `<span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${TYPE_COLORS[e.type] || '#ccc'};margin-right:6px"></span>${escapeHtml(e.name)}<br><span class="small">${(ROOM_TYPES.find(t => t.id === e.type) || {}).name || ''} · ${e.openings ?? 0} ouv.</span></span><button>+</button>`;
+      d.querySelector('button').onclick = ev => { ev.stopPropagation(); dgAddRoom(e); };
+      el.append(d);
+    });
+  });
+}
+async function dgAddRoom(e) {
+  try {
+    const r = await dgRoom(e.path);
+    let x = 0; for (const p of DG.d.pieces) { const q = DG.ready.get(p.room); if (q) x = Math.max(x, p.pos[0] + rotDims(q.size, p.rot)[0] + 4); }
+    const pc = { uid: dgUid++, room: e.path, roomId: e.id, name: r.name || e.name, pos: [x, 0, 0], rot: 0 };
+    DG.d.pieces.push(pc); DG.sel = pc; DG.pick = null;
+    if (DG.d.start == null && r.markers.start) DG.d.start = pc.uid;
+    dgTouched(); toast('« ' + pc.name + ' » ajoutée : raccorde-la à une autre salle par ses ouvertures');
+    if (DG.d.pieces.length === 1) dgFrame();
+  } catch (err) { toast('Impossible d\'ajouter : ' + err.message); }
+}
+$('dgReload').onclick = () => { DG.rooms.clear(); DG.ready.clear(); dgLoadLib(); dgEnsureRooms(); };
+
+// ----- ouvertures, raccords, chevauchements -----
+function dgOpenings() {
+  const out = [];
+  for (const pc of DG.d.pieces) { const r = DG.ready.get(pc.room); if (r) pieceOpenings(r, pc).forEach(o => out.push({ ...o, piece: pc })); }
+  for (const a of out) a.link = null;
+  for (let i = 0; i < out.length; i++) for (let j = i + 1; j < out.length; j++) {
+    const a = out[i], b = out[j];
+    if (a.piece === b.piece || b.dir !== oppositeDir(a.dir)) continue;
+    if (Math.abs(a.pos[0] - b.pos[0]) < 0.01 && Math.abs(a.pos[1] - b.pos[1]) < 0.01 && Math.abs(a.pos[2] - b.pos[2]) < 0.01) { a.link = b; b.link = a; }
+  }
+  return out;
+}
+function dgBox(pc) { const r = DG.ready.get(pc.room); if (!r) return null; const d = rotDims(r.size, pc.rot); return { min: pc.pos, max: [pc.pos[0] + d[0], pc.pos[1] + d[1], pc.pos[2] + d[2]], d }; }
+function dgOverlaps() {
+  const out = [], ps = DG.d.pieces;
+  for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
+    const a = dgBox(ps[i]), b = dgBox(ps[j]); if (!a || !b) continue;
+    if ([0, 1, 2].every(k => Math.min(a.max[k], b.max[k]) - Math.max(a.min[k], b.min[k]) > 0)) out.push([ps[i], ps[j]]);
+  }
+  return out;
+}
+function dgAttach(src, dst) { // déplace et tourne la salle de src pour que son ouverture vienne contre dst
+  const pc = src.piece, r = DG.ready.get(pc.room), lo = r.markers.openings[src.index], want = oppositeDir(dst.dir), H = ['N', 'E', 'S', 'W'];
+  let rot = pc.rot;
+  if (H.includes(want)) { if (!H.includes(lo.dir)) { toast('Ces deux ouvertures ne peuvent pas se faire face'); return; } rot = [0, 1, 2, 3].find(k => rotDir(lo.dir, k) === want); }
+  else if (lo.dir !== want) { toast('Une ouverture « haut » se raccorde à une ouverture « bas »'); return; }
+  pc.rot = rot;
+  const p0 = pieceOpenings(r, { pos: [0, 0, 0], rot })[src.index].pos, np = [dst.pos[0] - p0[0], dst.pos[1] - p0[1], dst.pos[2] - p0[2]], rd = np.map(Math.round);
+  pc.pos = rd; DG.sel = pc;
+  if (np.some((v, k) => Math.abs(v - rd[k]) > 0.01)) toast('Raccord décalé d\'un demi-bloc : les deux ouvertures ne sont pas centrées de la même façon');
+  else if (lo.w !== dst.w || lo.h !== dst.h) toast('Salles raccordées (attention : ouvertures de tailles différentes)');
+  else toast('Salles raccordées');
+  dgTouched();
+}
+
+// ----- aperçu 3D -----
+function dgRebuild3D() {
+  DG.group.clear();
+  const opens = dgOpenings();
+  for (const pc of DG.d.pieces) {
+    const r = DG.ready.get(pc.room); if (!r) continue;
+    const t = pieceTransform(r, pc), o = r.template.clone(); o.position.set(...t.offset); o.rotation.y = t.rotY; DG.group.add(o);
+    if (pc === DG.sel) { const b = dgBox(pc), h = new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(...b.min), new THREE.Vector3(...b.max)), 0xffd23a); DG.group.add(h); }
+  }
+  for (const o of opens) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8), new THREE.MeshBasicMaterial({ color: o.link ? 0x5fd16a : 0xffa94d, depthTest: false }));
+    m.position.set(o.pos[0], o.pos[1] + 0.3, o.pos[2]); m.renderOrder = 9; DG.group.add(m);
+  }
+  DG.dirty3D = false;
+}
+function dgFrame() {
+  let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  for (const pc of DG.d.pieces) { const b = dgBox(pc); if (!b) continue; for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], b.min[k]); mx[k] = Math.max(mx[k], b.max[k]); } }
+  if (mn[0] > mx[0]) { mn = [0, 0, 0]; mx = [40, 16, 40]; }
+  const c = mn.map((v, k) => (v + mx[k]) / 2), r = Math.max(mx[0] - mn[0], mx[2] - mn[2], 20);
+  camera.position.set(c[0] + r * 0.7, c[1] + r * 0.9, c[2] + r * 1.1); controls.target.set(c[0], c[1], c[2]); controls.update();
+  DG.view.cx = c[0]; DG.view.cz = c[2]; const pl = $('dgPlan'); DG.view.ppb = Math.max(1.5, Math.min(24, Math.min(pl.clientWidth, pl.clientHeight) * 0.85 / r)); DG.planDirty = true;
+}
+$('dgFrame').onclick = dgFrame;
+
+// ----- plan vu de dessus -----
+const pl = $('dgPlan'), pg = pl.getContext('2d');
+const toS = (x, z) => [pl.clientWidth / 2 + (x - DG.view.cx) * DG.view.ppb, pl.clientHeight / 2 + (z - DG.view.cz) * DG.view.ppb];
+const toW = (sx, sy) => [DG.view.cx + (sx - pl.clientWidth / 2) / DG.view.ppb, DG.view.cz + (sy - pl.clientHeight / 2) / DG.view.ppb];
+function dgDrawPlan() {
+  const W = pl.clientWidth, H = pl.clientHeight, dpr = Math.min(devicePixelRatio, 2);
+  if (pl.width !== Math.round(W * dpr) || pl.height !== Math.round(H * dpr)) { pl.width = Math.round(W * dpr); pl.height = Math.round(H * dpr); }
+  pg.setTransform(dpr, 0, 0, dpr, 0, 0); pg.fillStyle = '#141820'; pg.fillRect(0, 0, W, H);
+  const v = DG.view, step = v.ppb >= 4 ? 5 : 25;
+  const [x0, z0] = toW(0, 0), [x1, z1] = toW(W, H);
+  pg.lineWidth = 1;
+  for (let x = Math.floor(x0 / step) * step; x <= x1; x += step) { const [sx] = toS(x, 0); pg.strokeStyle = x % 25 === 0 ? '#262e3d' : '#1b212c'; pg.beginPath(); pg.moveTo(sx + .5, 0); pg.lineTo(sx + .5, H); pg.stroke(); }
+  for (let z = Math.floor(z0 / step) * step; z <= z1; z += step) { const [, sy] = toS(0, z); pg.strokeStyle = z % 25 === 0 ? '#262e3d' : '#1b212c'; pg.beginPath(); pg.moveTo(0, sy + .5); pg.lineTo(W, sy + .5); pg.stroke(); }
+  const overl = new Set(dgOverlaps().flat());
+  const ps = [...DG.d.pieces].sort((a, b) => a.pos[1] - b.pos[1]);
+  pg.font = '12px system-ui'; pg.textBaseline = 'top';
+  for (const pc of ps) {
+    const b = dgBox(pc), r = DG.ready.get(pc.room); if (!b) continue;
+    const [sx, sy] = toS(b.min[0], b.min[2]), w = b.d[0] * v.ppb, h = b.d[2] * v.ppb;
+    pg.globalAlpha = 0.5; pg.fillStyle = TYPE_COLORS[r.sheet.type] || '#ccc'; pg.fillRect(sx, sy, w, h); pg.globalAlpha = 1;
+    pg.lineWidth = pc === DG.sel ? 3 : 1.5; pg.strokeStyle = overl.has(pc) ? '#ff4757' : pc === DG.sel ? '#ffd23a' : '#d0d5dd'; pg.strokeRect(sx + .5, sy + .5, w, h);
+    pg.fillStyle = '#fff'; pg.fillText(pc.name + (pc.pos[1] ? '  (hauteur ' + pc.pos[1] + ')' : '') + (DG.d.start === pc.uid ? '  ★ départ' : ''), sx + 5, sy + 4);
+  }
+  for (const o of dgOpenings()) {
+    const [sx, sy] = toS(o.pos[0], o.pos[2]), src = DG.pick && DG.pick.piece === o.piece && DG.pick.index === o.index;
+    pg.fillStyle = src ? '#ffd23a' : o.link ? '#5fd16a' : '#ffa94d';
+    if (o.dir === 'U' || o.dir === 'D') { pg.fillRect(sx - 6, sy - 6, 12, 12); pg.fillStyle = '#111'; pg.fillText(o.dir === 'U' ? '↑' : '↓', sx - 4, sy - 6); continue; }
+    const dv = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }[o.dir];
+    pg.strokeStyle = pg.fillStyle; pg.lineWidth = 3; pg.beginPath(); pg.moveTo(sx, sy); pg.lineTo(sx + dv[0] * 14, sy + dv[1] * 14); pg.stroke();
+    pg.beginPath(); pg.arc(sx, sy, src ? 8 : 6, 0, 7); pg.fill();
+  }
+  DG.planDirty = false;
+}
+function dgHit(ev) {
+  const rc = pl.getBoundingClientRect(), mx = ev.clientX - rc.left, my = ev.clientY - rc.top;
+  for (const o of dgOpenings()) { const [sx, sy] = toS(o.pos[0], o.pos[2]); if (Math.hypot(sx - mx, sy - my) < 9) return { o, mx, my }; }
+  const [wx, wz] = toW(mx, my);
+  const ps = [...DG.d.pieces].sort((a, b) => b.pos[1] - a.pos[1]);
+  for (const pc of ps) { const b = dgBox(pc); if (b && wx >= b.min[0] && wx <= b.max[0] && wz >= b.min[2] && wz <= b.max[2]) return { pc, mx, my, wx, wz }; }
+  return { mx, my, wx, wz };
+}
+pl.addEventListener('contextmenu', e => e.preventDefault());
+pl.addEventListener('pointerdown', ev => {
+  pl.setPointerCapture(ev.pointerId);
+  const h = dgHit(ev);
+  if (ev.button !== 0) { DG.drag = { pan: true, mx: h.mx, my: h.my, cx: DG.view.cx, cz: DG.view.cz }; return; }
+  if (h.o) {
+    if (DG.pick && DG.pick.piece !== h.o.piece) { dgAttach(DG.pick, h.o); DG.pick = null; }
+    else { DG.pick = (DG.pick && DG.pick.piece === h.o.piece && DG.pick.index === h.o.index) ? null : h.o; DG.sel = h.o.piece; if (DG.pick) toast('Ouverture choisie : clique maintenant l\'ouverture où l\'accrocher'); }
+    dgTouched(); return;
+  }
+  if (h.pc) { DG.sel = h.pc; DG.drag = { pc: h.pc, wx: h.wx, wz: h.wz, pos: h.pc.pos.slice() }; }
+  else { DG.sel = null; DG.pick = null; DG.drag = { pan: true, mx: h.mx, my: h.my, cx: DG.view.cx, cz: DG.view.cz }; }
+  DG.planDirty = true; DG.dirty3D = true; dgRenderPanels();
+});
+pl.addEventListener('pointermove', ev => {
+  const d = DG.drag; if (!d) return; const rc = pl.getBoundingClientRect(), mx = ev.clientX - rc.left, my = ev.clientY - rc.top;
+  if (d.pan) { DG.view.cx = d.cx - (mx - d.mx) / DG.view.ppb; DG.view.cz = d.cz - (my - d.my) / DG.view.ppb; DG.planDirty = true; return; }
+  const [wx, wz] = toW(mx, my), nx = d.pos[0] + Math.round(wx - d.wx), nz = d.pos[2] + Math.round(wz - d.wz);
+  if (nx !== d.pc.pos[0] || nz !== d.pc.pos[2]) { d.pc.pos = [nx, d.pc.pos[1], nz]; d.moved = true; DG.planDirty = true; DG.dirty3D = true; }
+});
+pl.addEventListener('pointerup', () => { if (DG.drag && DG.drag.moved) dgTouched(); DG.drag = null; });
+pl.addEventListener('wheel', ev => {
+  ev.preventDefault(); const rc = pl.getBoundingClientRect(), mx = ev.clientX - rc.left, my = ev.clientY - rc.top, [wx, wz] = toW(mx, my);
+  DG.view.ppb = Math.max(1, Math.min(40, DG.view.ppb * (ev.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  const [ax, az] = toW(mx, my); DG.view.cx += wx - ax; DG.view.cz += wz - az; DG.planDirty = true;
+}, { passive: false });
+function dgRotate(pc, dir) {
+  const b = dgBox(pc); if (!b) return; const c = [b.min[0] + b.d[0] / 2, b.min[2] + b.d[2] / 2];
+  pc.rot = (pc.rot + dir + 4) & 3; const nd = rotDims(DG.ready.get(pc.room).size, pc.rot);
+  pc.pos = [Math.round(c[0] - nd[0] / 2), pc.pos[1], Math.round(c[1] - nd[2] / 2)]; dgTouched();
+}
+function dgRemove(pc) { DG.d.pieces = DG.d.pieces.filter(p => p !== pc); if (DG.d.start === pc.uid) DG.d.start = null; DG.sel = null; DG.pick = null; dgTouched(); }
+function dgKey(e) {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA' || document.querySelector('dialog[open]')) return;
+  if (e.key === 'Escape') { DG.pick = null; DG.planDirty = true; return; }
+  const pc = DG.sel; if (!pc) return; const st = e.shiftKey ? 5 : 1;
+  const mv = { ArrowLeft: [-st, 0, 0], ArrowRight: [st, 0, 0], ArrowUp: [0, 0, -st], ArrowDown: [0, 0, st], PageUp: [0, 1, 0], PageDown: [0, -1, 0] }[e.key];
+  if (mv) { e.preventDefault(); pc.pos = pc.pos.map((v, k) => v + mv[k]); dgTouched(); return; }
+  if (e.key === 'r' || e.key === 'R') dgRotate(pc, e.shiftKey ? -1 : 1);
+  if (e.key === 'Delete' || e.key === 'Backspace') dgRemove(pc);
+}
+function dgFrameTick() { if (DG.dirty3D) dgRebuild3D(); if (DG.planDirty) dgDrawPlan(); }
+
+// ----- panneaux -----
+const dgCatLabel = path => path ? path.split('/').map((_, k, a) => DG.catalog.categories[a.slice(0, k + 1).join('/')] || a[k]).join(' › ') : '';
+function dgRenderPanels() {
+  if (mapMode !== 'dungeon') return;
+  const d = DG.d, cats = { ...DG.catalog.categories }; if (d.folder && !cats[d.folder]) cats[d.folder] = d.folder.split('/').pop();
+  $('dgFolder').innerHTML = Object.keys(cats).sort().map(k => `<option value="${k}" ${k === d.folder ? 'selected' : ''}>${escapeHtml(dgCatLabel(k))}</option>`).join('');
+  if (document.activeElement !== $('dgLevel')) $('dgLevel').value = d.level || 1;
+  if (document.activeElement !== $('dgDesc')) $('dgDesc').value = d.description || '';
+  const starts = d.pieces.filter(p => { const r = DG.ready.get(p.room); return r && r.markers.start; });
+  $('dgStart').innerHTML = (starts.length ? '' : '<option value="">— aucune salle avec un départ joueur —</option>') + starts.map(p => `<option value="${p.uid}" ${p.uid === d.start ? 'selected' : ''}>${escapeHtml(p.name)} #${p.uid}</option>`).join('');
+  if (starts.length && !starts.some(p => p.uid === d.start)) d.start = starts[0].uid;
+  // salle sélectionnée
+  const pc = DG.sel, el = $('dgSel');
+  if (!pc || !d.pieces.includes(pc)) el.innerHTML = 'Aucune : clique une salle sur le plan.';
+  else {
+    const r = DG.ready.get(pc.room), opens = dgOpenings().filter(o => o.piece === pc);
+    el.innerHTML = `<div class="row"><b>${escapeHtml(pc.name)}</b> <span class="small">${r ? (ROOM_TYPES.find(t => t.id === r.sheet.type) || {}).name || '' : 'chargement…'}</span></div>
+      <div class="row"><label>Position</label><input type="number" data-k="0" value="${pc.pos[0]}" style="width:52px"><input type="number" data-k="1" value="${pc.pos[1]}" style="width:52px"><input type="number" data-k="2" value="${pc.pos[2]}" style="width:52px"></div>
+      <div class="row"><label>Rotation</label><button data-r="-1">⟲</button><span>${pc.rot * 90}°</span><button data-r="1">⟳</button><span style="flex:1"></span><button data-del>Retirer</button></div>
+      ${opens.map(o => `<div class="mk"><span style="color:${o.link ? '#5fd16a' : '#ffa94d'}">●</span> ${escapeHtml(o.name || 'Ouverture')} (${o.dir}) : ${o.link ? 'raccordée à « ' + escapeHtml(o.link.piece.name) + ' »' : 'libre'}</div>`).join('')}`;
+    el.querySelectorAll('[data-k]').forEach(inp => inp.onchange = () => { pc.pos[+inp.dataset.k] = Math.round(+inp.value); dgTouched(); });
+    el.querySelectorAll('[data-r]').forEach(b => b.onclick = () => dgRotate(pc, +b.dataset.r));
+    el.querySelector('[data-del]').onclick = () => dgRemove(pc);
+  }
+  // vérifications
+  const opens = dgOpenings(), linked = opens.filter(o => o.link).length, ov = dgOverlaps(), missing = d.pieces.filter(p => !DG.ready.get(p.room)).length;
+  $('dgCheck').innerHTML = `<div><span>Salles</span><span>${d.pieces.length}</span></div>
+    <div><span>Ouvertures raccordées</span><span>${linked} / ${opens.length}</span></div>
+    <div><span>Ouvertures libres</span><span style="color:${opens.length - linked ? '#ffa94d' : '#5fd16a'}">${opens.length - linked}</span></div>
+    <div><span>Chevauchements</span><span style="color:${ov.length ? '#ff4757' : '#5fd16a'}">${ov.length}</span></div>
+    <div><span>Départ du joueur</span><span style="color:${d.start != null ? '#5fd16a' : '#ff4757'}">${d.start != null ? 'oui' : 'manquant'}</span></div>
+    ${missing ? `<div><span>Salles introuvables</span><span style="color:#ff4757">${missing}</span></div>` : ''}`;
+}
+$('dgFolder').onchange = e => { DG.d.folder = e.target.value; dgTouched(); };
+$('dgLevel').oninput = e => { DG.d.level = Math.max(1, Math.round(+e.target.value || 1)); dgTouched(); };
+$('dgDesc').oninput = e => { DG.d.description = e.target.value; dgUnsaved = true; };
+$('dgStart').onchange = e => { DG.d.start = e.target.value ? +e.target.value : null; dgTouched(); };
+const dgAddCat = parent => { const label = prompt(parent ? 'Nom de la sous-catégorie de « ' + dgCatLabel(parent) + ' »' : 'Nom de la nouvelle catégorie'); if (!label) return; const path = (parent ? parent + '/' : '') + slug(label); DG.catalog.categories[path] = label.trim(); DG.d.folder = path; dgTouched(); };
+$('dgAddCat').onclick = () => dgAddCat(''); $('dgAddSub').onclick = () => dgAddCat(DG.d.folder);
+
+// ----- fichiers -----
+async function dgLoadCatalog() { try { const g = await ghGet('dungeons/index.json'); if (g && g.json && g.json.categories) DG.catalog = g.json; } catch (e) { } dgRenderPanels(); }
+function dgNew() { if (DG.d.pieces.length && !confirm('Commencer un nouveau donjon ? Le donjon actuel reste sauvegardé seulement s\'il a été enregistré ou envoyé.')) return; DG.d = emptyDungeon(); DG.sel = DG.pick = null; $('cName').value = DG.d.name; dgTouched(); dgFrame(); }
+function dgSaveFile() {
+  DG.d.name = $('cName').value.trim() || 'Donjon';
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(DG.d, null, 1)], { type: 'application/json' })); a.download = slug(DG.d.name) + '.json'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000); lsSet(LSD, JSON.stringify(DG.d)); dgUnsaved = false; toast('Fichier enregistré : ' + slug(DG.d.name) + '.json');
+}
+async function dgLoad(d) {
+  if (!d || d.format !== 'voxelblade-dungeon') throw new Error('Ce fichier n\'est pas un donjon Voxel Blade');
+  DG.d = { ...emptyDungeon(), ...d, pieces: (d.pieces || []).map(p => ({ ...p, pos: p.pos.slice(), rot: p.rot & 3 })) };
+  dgUid = 1 + Math.max(0, ...DG.d.pieces.map(p => p.uid || 0)); DG.sel = DG.pick = null; $('cName').value = DG.d.name;
+  await dgEnsureRooms(); dgTouched(); dgFrame();
+}
+async function dgOpenFile(f) { try { await dgLoad(JSON.parse(await f.text())); toast('« ' + DG.d.name + ' » ouvert'); } catch (err) { toast('Impossible d\'ouvrir : ' + err.message); } }
+async function dgOpenGit() {
+  $('dlgOpen').showModal(); $('dlgOpen').querySelector('h2').textContent = 'Ouvrir un donjon du dépôt'; $('openTree').textContent = 'Chargement…';
+  await dgLoadCatalog();
+  const t = $('openTree'); t.innerHTML = '';
+  if (!DG.catalog.dungeons.length) { t.textContent = 'Aucun donjon dans le dépôt pour l\'instant.'; return; }
+  const by = {}; DG.catalog.dungeons.forEach(e => { const f = e.path.split('/').slice(0, -1).join('/'); (by[f] = by[f] || []).push(e); });
+  Object.keys(by).sort().forEach(f => {
+    const h = document.createElement('div'); h.className = 'cat'; h.textContent = dgCatLabel(f); t.append(h);
+    by[f].forEach(e => {
+      const d = document.createElement('div'); d.className = 'cr';
+      d.innerHTML = `<span>${escapeHtml(e.name)}</span><span class="small">${e.pieces ?? '?'} salles · niv. ${e.level ?? '?'}</span>`;
+      d.onclick = async () => { try { const g = await ghGet('dungeons/' + e.path); if (!g) throw new Error('fichier introuvable'); await dgLoad(g.json); $('dlgOpen').close(); toast('« ' + DG.d.name + ' » ouvert depuis GitHub'); } catch (err) { toast('Impossible d\'ouvrir : ' + err.message); } };
+      t.append(d);
+    });
+  });
+}
+const dgPath = () => (DG.d.folder ? DG.d.folder + '/' : '') + slug(DG.d.name) + '.json';
+function dgSendDialog() {
+  const c = gitCfg(); $('gOwner').value = c.owner || 'Ilkoko-33233'; $('gRepo').value = c.repo || 'voxel-blade'; $('gBranch').value = c.branch || 'main'; $('gToken').value = c.token || '';
+  DG.d.name = $('cName').value.trim() || 'Donjon';
+  $('gPath').textContent = 'Fichier : dungeons/' + dgPath() + ' · catégorie : ' + dgCatLabel(DG.d.folder); $('dlgGit').showModal();
+}
+async function dgSend() {
+  const c = { owner: $('gOwner').value.trim(), repo: $('gRepo').value.trim(), branch: $('gBranch').value.trim() || 'main', token: $('gToken').value.trim() };
+  if (!c.owner || !c.repo || !c.token) { toast('Renseigne le dépôt et le jeton'); return; }
+  lsSet(LS.git, JSON.stringify(c));
+  if (!DG.d.id) DG.d.id = slug(DG.d.name) + '-' + Math.random().toString(36).slice(2, 6);
+  const rel = dgPath(), path = 'dungeons/' + rel;
+  $('gOk').disabled = true; $('gOk').textContent = 'Envoi…';
+  try {
+    const cur = await ghGet(path);
+    await ghPut(c, path, DG.d, cur && cur.sha, (cur ? 'Mise à jour' : 'Ajout') + ' du donjon « ' + DG.d.name + ' » (éditeur de maps)');
+    const ig = await ghGet('dungeons/index.json'), idx = (ig && ig.json && ig.json.categories) ? ig.json : { format: 'voxelblade-dungeons-index', version: 1, categories: {}, dungeons: [] };
+    idx.dungeons = idx.dungeons || []; Object.assign(idx.categories, DG.catalog.categories);
+    const segs = DG.d.folder ? DG.d.folder.split('/') : []; segs.forEach((_, k) => { const p = segs.slice(0, k + 1).join('/'); if (!idx.categories[p]) idx.categories[p] = segs[k]; });
+    const old = idx.dungeons.find(e => e.id === DG.d.id);
+    if (old && old.path !== rel) { const o = await ghGet('dungeons/' + old.path); if (o && o.sha) await ghDelete(c, 'dungeons/' + old.path, o.sha, 'Déplacement du donjon « ' + DG.d.name + ' » (éditeur de maps)'); }
+    idx.dungeons = idx.dungeons.filter(e => e.id !== DG.d.id && e.path !== rel);
+    idx.dungeons.push({ id: DG.d.id, name: DG.d.name, path: rel, level: DG.d.level, pieces: DG.d.pieces.length });
+    idx.dungeons.sort((a, b) => a.path.localeCompare(b.path));
+    await ghPut(c, 'dungeons/index.json', idx, ig && ig.sha, 'Index des donjons : « ' + DG.d.name + ' » (éditeur de maps)');
+    DG.catalog = idx; $('dlgGit').close(); lsSet(LSD, JSON.stringify(DG.d)); dgUnsaved = false; toast('Envoyé sur GitHub : ' + path);
+  } catch (err) { toast('Échec de l\'envoi : ' + err.message); }
+  $('gOk').disabled = false; $('gOk').textContent = 'Envoyer';
+}
+
+// ----- onglets Salle / Donjon -----
+function setMapMode(m) {
+  mapMode = m; const dg = m === 'dungeon';
+  $('tabRoom').classList.toggle('on', !dg); $('tabDungeon').classList.toggle('on', dg);
+  $('leftModel').hidden = dg; $('leftDungeon').hidden = !dg; $('rightRoom').hidden = dg; $('rightDungeon').hidden = !dg;
+  $('slicePane').hidden = dg; $('dgPane').hidden = !dg;
+  world.visible = helpers.visible = markerGroup.visible = !dg; DG.group.visible = dg; hover.visible = false;
+  $('cName').value = dg ? DG.d.name : P.name; $('cName').title = dg ? 'Nom du donjon' : 'Nom de la salle';
+  if (dg) {
+    view.dark = false; $('vDark').classList.remove('on'); applyLighting(); rebuildMarkers();
+    $('hint3d').textContent = 'Aperçu 3D du donjon · clic droit : tourner · molette : zoom · clic milieu : déplacer';
+    resize(); dgLoadLib(); dgLoadCatalog(); dgRenderPanels(); dgEnsureRooms().then(() => { dgFrame(); });
+  } else { setTool(tool); resize(); frameCamera(); markDirty(true, true); }
+}
+$('tabRoom').onclick = () => setMapMode('room'); $('tabDungeon').onclick = () => setMapMode('dungeon');
+
 /* ============ Raccourcis ============ */
 addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || document.querySelector('dialog[open]')) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); mapMode === 'dungeon' ? dgSaveFile() : saveFile(); return; }
+  if (mapMode === 'dungeon') { dgKey(e); return; }
 
   if (e.key === '[') setLayer(slice.layer - 1); else if (e.key === ']') setLayer(slice.layer + 1);
   else { const t = TOOLS.find(t => t[2].toLowerCase() === e.key.toLowerCase()); if (t && !e.ctrlKey && !e.metaKey) setTool(t[0]); }
@@ -1108,7 +1476,7 @@ let toastT; function toast(msg) { const t = $('toast'); t.textContent = msg; t.c
   setTool('pencil'); syncBrushUI(); afterLoad(); unsaved = false; $('saveState').textContent = ok ? 'reprise de la dernière session' : '';
   resize(); requestAnimationFrame(loop); loadCatalog(); loadCreatureCatalog();
 })();
-window.__ed = { placeMarkerAt, get P() { return P; }, occ: () => occ, applyAt, beginStroke, endStroke, undo, redo, serialize, deserialize, view, slice, buckets, setTool, fillInside, shape3D, brush, stats: () => stats };
+window.__ed = { DG, setMapMode, dgAttach, dgOpenings, placeMarkerAt, get P() { return P; }, occ: () => occ, applyAt, beginStroke, endStroke, undo, redo, serialize, deserialize, view, slice, buckets, setTool, fillInside, shape3D, brush, stats: () => stats };
 </script>
 </body>
 </html>
